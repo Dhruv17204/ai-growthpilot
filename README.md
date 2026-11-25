@@ -5,7 +5,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-17%20Passed-success.svg)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-32%20Passed-success.svg)](https://pytest.org)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
 **AI GrowthPilot** is a full-stack, enterprise-grade business growth and marketing automation SaaS platform engineered specifically for small IT companies, software agencies, AI consultancies, and digital service providers.
@@ -160,7 +160,7 @@ Small technology firms frequently struggle with:
 
 ### Step 1: Clone Repository
 ```bash
-git clone https://github.com/<your-username>/ai-growthpilot.git
+git clone https://github.com/Dhruv17204/ai-growthpilot.git
 cd ai-growthpilot
 ```
 
@@ -199,6 +199,9 @@ npm install
 
 # Run production build check
 npm run build
+
+# Run Vitest unit test suite (3 passed)
+npm test
 
 # Start Vite dev server (runs on http://127.0.0.1:5173)
 npm run dev

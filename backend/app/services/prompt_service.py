@@ -155,6 +155,34 @@ Return JSON with keys:
     }
 ]
 
+import re
+from datetime import datetime, timedelta
+
+EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+PHONE_PATTERN = re.compile(r'(?<![A-Za-z0-9])(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![A-Za-z0-9])')
+
+def redact_sensitive_text(text: str) -> str:
+    """Redacts API keys, emails, and phone numbers from text logs."""
+    if not text:
+        return text
+    # 1. API Keys / Secrets first (matches Google AI keys: AIzaSy followed by 20+ chars)
+    text = re.sub(r'AIzaSy[A-Za-z0-9_-]{20,}', '[REDACTED_SECRET]', text)
+    # 2. Email addresses
+    text = EMAIL_PATTERN.sub("[REDACTED_EMAIL]", text)
+    # 3. Phone numbers (with strict boundary lookarounds so internal digits aren't mangled)
+    text = PHONE_PATTERN.sub("[REDACTED_PHONE]", text)
+    return text
+
+def redact_structure(data: Any) -> Any:
+    """Recursively redacts sensitive patterns in nested dicts/lists."""
+    if isinstance(data, dict):
+        return {k: redact_structure(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [redact_structure(item) for item in data]
+    elif isinstance(data, str):
+        return redact_sensitive_text(data)
+    return data
+
 def log_prompt_execution(
     db: Session,
     feature_name: str,
@@ -170,21 +198,35 @@ def log_prompt_execution(
     prompt_template_id: Optional[int] = None,
     is_example: bool = False
 ) -> PromptExecution:
+    sanitized_prompt = redact_sensitive_text(prompt_rendered)
+    sanitized_inputs = redact_structure(user_inputs)
+    sanitized_output = redact_structure(generated_output)
+
     execution = PromptExecution(
         feature_name=feature_name,
         prompt_template_id=prompt_template_id,
         prompt_version=prompt_version,
         system_instruction_used=system_instruction,
-        prompt_rendered=prompt_rendered,
-        user_inputs=user_inputs,
+        prompt_rendered=sanitized_prompt,
+        user_inputs=sanitized_inputs,
         model_used=model_used,
         execution_status=execution_status,
         error_message=error_message,
         latency_ms=latency_ms,
-        generated_output=generated_output,
+        generated_output=sanitized_output,
         is_example=is_example
     )
     db.add(execution)
     db.commit()
     db.refresh(execution)
     return execution
+
+def clean_old_prompt_executions(db: Session, days: int = 30) -> int:
+    """
+    Data retention policy: Deletes prompt executions older than the specified days.
+    Returns the count of deleted records.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    deleted = db.query(PromptExecution).filter(PromptExecution.created_at < cutoff).delete()
+    db.commit()
+    return deleted

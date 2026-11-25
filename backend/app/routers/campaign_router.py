@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_admin_or_local
 from app.models.models import Campaign
 from app.schemas.schemas import CampaignResponse, GenerateCampaignRequest, CampaignUpdate
 from app.services.campaign_service import generate_campaign
@@ -51,7 +52,7 @@ def update_campaign(campaign_id: int, payload: CampaignUpdate, db: Session = Dep
     db.refresh(c)
     return c
 
-@router.delete("/campaigns/{campaign_id}")
+@router.delete("/campaigns/{campaign_id}", dependencies=[Depends(require_admin_or_local)])
 def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not c:

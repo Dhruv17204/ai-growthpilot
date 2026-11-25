@@ -19,35 +19,23 @@ AI GrowthPilot can be deployed as two decoupled services (Frontend SPA + Backend
 
 ---
 
-## 2. Option A: Containerized Deployment (Docker)
+## 2. Option A: Containerized Deployment (Docker Compose)
 
-### Dockerfile (Backend)
-Create `backend/Dockerfile`:
-```dockerfile
-FROM python:3.11-slim
+The project includes a production multi-stage `Dockerfile` and `docker-compose.yml` at the repository root:
 
-WORKDIR /app
+```bash
+# Launch unified containerized application
+docker compose up --build -d
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Verify health status
+docker compose ps
+curl http://localhost:8000/api/health
 ```
 
-Build and run:
+### Standalone Docker Build
 ```bash
-cd backend
-docker build -t ai-growthpilot-backend .
-docker run -p 8000:8000 -e GEMINI_API_KEY="your-api-key" ai-growthpilot-backend
+docker build -t ai-growthpilot:latest .
+docker run -p 8000:8000 -e GEMINI_API_KEY="your-api-key" ai-growthpilot:latest
 ```
 
 ---

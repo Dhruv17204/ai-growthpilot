@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, Boolean, DateTime, ForeignKey, JSON
+    Column, Integer, String, Text, Float, Boolean, DateTime, Date, ForeignKey, JSON
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -180,3 +180,22 @@ class AIActivity(Base):
     entity_id = Column(Integer, nullable=True)
     is_demo = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class CampaignMetric(Base):
+    __tablename__ = "campaign_metrics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True, index=True)
+    metric_date = Column(Date, nullable=False, default=datetime.date.today)
+    channel = Column(String(50), nullable=False)
+    impressions = Column(Integer, default=0, nullable=False)
+    clicks = Column(Integer, default=0, nullable=False)
+    conversions = Column(Integer, default=0, nullable=False)
+    spend = Column(Float, default=0.0, nullable=False)
+    revenue = Column(Float, default=0.0, nullable=False)
+    is_demo = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    campaign = relationship("Campaign", backref="metrics")
+

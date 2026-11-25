@@ -35,12 +35,23 @@ async def import_leads_csv(file: UploadFile = File(...), db: Session = Depends(g
             detail="Invalid file type. Please upload a standard CSV file with .csv extension."
         )
 
-    content = await file.read()
-    if len(content) > MAX_CSV_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Uploaded file exceeds maximum limit of {MAX_CSV_BYTES // (1024 * 1024)} MB."
-        )
+    # Bounded 64KB chunk reading to guard against unbounded memory consumption
+    CHUNK_SIZE = 64 * 1024  # 64 KB
+    chunks = []
+    total_bytes = 0
+    while True:
+        chunk = await file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > MAX_CSV_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Uploaded file exceeds maximum limit of {MAX_CSV_BYTES // (1024 * 1024)} MB."
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
 
     profile = db.query(BusinessProfile).first()
     result = process_leads_csv(db, content, profile)

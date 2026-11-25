@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
 import {
   BarChart3,
   TrendingUp,
@@ -12,7 +12,9 @@ import {
   ArrowUpRight,
   Filter,
   CheckCircle2,
-  Info
+  Info,
+  UploadCloud,
+  AlertCircle
 } from 'lucide-react';
 import {
   BarChart,
@@ -31,12 +33,35 @@ import {
 const SOURCE_COLORS = ['#6366F1', '#8B5CF6', '#EC4899', '#3B82F6', '#10B981', '#F59E0B'];
 
 export const AnalyticsPage: React.FC = () => {
+  const queryClient = useQueryClient();
+  const [dateRange, setDateRange] = useState('Last 30 Days');
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+
   const { data: analytics, isLoading } = useQuery({
     queryKey: ['analytics-overview'],
     queryFn: api.getAnalyticsOverview,
   });
 
-  const [dateRange, setDateRange] = useState('Last 30 Days');
+  const uploadMetricsMutation = useMutation({
+    mutationFn: (file: File) => api.importCampaignMetricsCSV(file),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['analytics-overview'] });
+      setUploadMessage(`Successfully imported ${res.rows_imported} metric records!`);
+      setTimeout(() => setUploadMessage(null), 4000);
+    },
+    onError: (err: any) => {
+      setUploadMessage(`Upload failed: ${err.message}`);
+      setTimeout(() => setUploadMessage(null), 5000);
+    }
+  });
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadMetricsMutation.mutate(file);
+      e.target.value = '';
+    }
+  };
 
   if (isLoading || !analytics) {
     return (
@@ -103,7 +128,7 @@ export const AnalyticsPage: React.FC = () => {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-900">{analytics.total_leads}</span>
-            <span className="text-xs font-semibold text-emerald-600">+12% MoM</span>
+            <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">Pipeline Total</span>
           </div>
           <p className="mt-1 text-xs text-slate-400">Total stored lead profiles</p>
         </div>
@@ -207,16 +232,37 @@ export const AnalyticsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Toast Notification */}
+      {uploadMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700 text-xs font-semibold animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{uploadMessage}</span>
+        </div>
+      )}
+
       {/* Campaign Conversion Performance Table */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
           <div>
             <h3 className="text-base font-bold text-slate-900">Campaign Attribution & Funnel Conversions</h3>
-            <p className="text-xs text-slate-500">Real-time performance across active campaign channels</p>
+            <p className="text-xs text-slate-500">Authentic performance across active campaign channels</p>
           </div>
-          <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
-            {analytics.campaign_performance.length} Campaigns Tracked
-          </span>
+          <div className="flex items-center gap-2">
+            <label className="cursor-pointer px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition-colors">
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>Import Metrics CSV</span>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="hidden"
+                disabled={uploadMetricsMutation.isPending}
+              />
+            </label>
+            <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-1.5 rounded-xl">
+              {analytics.campaign_performance.length} Campaigns Tracked
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -227,14 +273,16 @@ export const AnalyticsPage: React.FC = () => {
                 <th className="pb-3">Channel</th>
                 <th className="pb-3">Impressions</th>
                 <th className="pb-3">Clicks / Engagements</th>
-                <th className="pb-3">Leads Captured</th>
+                <th className="pb-3">Conversions</th>
                 <th className="pb-3">Conversion (CTR)</th>
+                <th className="pb-3">Cost / Lead</th>
                 <th className="pb-3">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {analytics.campaign_performance.map((c, i) => {
-                const ctr = ((c.clicks / c.impressions) * 100).toFixed(2);
+              {analytics.campaign_performance.map((c: any, i: number) => {
+                const hasMetrics = c.has_data !== false && c.impressions > 0;
+                const ctrDisplay = c.ctr !== null && c.ctr !== undefined ? `${c.ctr}%` : (hasMetrics ? `${((c.clicks / c.impressions) * 100).toFixed(2)}%` : null);
                 return (
                   <tr key={i} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3.5 font-semibold text-slate-900">{c.name}</td>
@@ -243,10 +291,21 @@ export const AnalyticsPage: React.FC = () => {
                         {c.channel}
                       </span>
                     </td>
-                    <td className="py-3.5 text-slate-600 font-medium">{c.impressions.toLocaleString()}</td>
-                    <td className="py-3.5 text-slate-600 font-medium">{c.clicks.toLocaleString()}</td>
-                    <td className="py-3.5 font-bold text-indigo-700">{c.leads}</td>
-                    <td className="py-3.5 text-emerald-600 font-semibold">{ctr}%</td>
+                    <td className="py-3.5 text-slate-600 font-medium">
+                      {hasMetrics ? c.impressions.toLocaleString() : <span className="text-slate-400 italic">Not enough data</span>}
+                    </td>
+                    <td className="py-3.5 text-slate-600 font-medium">
+                      {hasMetrics ? c.clicks.toLocaleString() : <span className="text-slate-400 italic">Not enough data</span>}
+                    </td>
+                    <td className="py-3.5 font-bold text-indigo-700">
+                      {hasMetrics ? c.conversions || c.leads : <span className="text-slate-400 italic font-normal">Not enough data</span>}
+                    </td>
+                    <td className="py-3.5 font-semibold text-emerald-600">
+                      {ctrDisplay || <span className="text-slate-400 italic font-normal">Not enough data</span>}
+                    </td>
+                    <td className="py-3.5 text-slate-600 font-medium">
+                      {c.cpl !== null && c.cpl !== undefined ? `$${c.cpl}` : <span className="text-slate-400 italic font-normal">—</span>}
+                    </td>
                     <td className="py-3.5">
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         {c.status}

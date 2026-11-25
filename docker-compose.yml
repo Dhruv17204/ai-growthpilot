@@ -1,0 +1,18 @@
+services:
+  growthpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-growthpilot
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - HOST=0.0.0.0
+      - PORT=8000
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - DEMO_MODE=${DEMO_MODE:-false}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+    restart: unless-stopped

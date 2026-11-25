@@ -3,10 +3,26 @@ import json
 import time
 import asyncio
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Type
+from pydantic import BaseModel, ValidationError
 from app.config import settings
 
 logger = logging.getLogger("growthpilot.gemini")
+
+def categorize_gemini_error(exc: Exception) -> str:
+    """Categorizes Gemini SDK and network exceptions into clear, actionable error messages."""
+    err_str = str(exc)
+    err_lower = err_str.lower()
+
+    if "401" in err_str or "unauthenticated" in err_lower or "api_key_invalid" in err_lower or "permission_denied" in err_lower:
+        return "Authentication failed: Invalid or expired Gemini API key."
+    if "429" in err_str or "resource_exhausted" in err_lower or "quota" in err_lower or "rate limit" in err_lower:
+        return "Rate limit or quota exceeded (429). Please retry after a brief cooldown."
+    if "503" in err_str or "500" in err_str or "unavailable" in err_lower or "internal" in err_lower:
+        return "Gemini upstream service temporarily unavailable (500/503). Please retry shortly."
+    if "connection" in err_lower or "network" in err_lower or "dns" in err_lower:
+        return f"Network connectivity error contacting Google GenAI: {err_str}"
+    return f"Gemini API request failed: {err_str}"
 
 class GeminiClient:
     def __init__(self):
@@ -42,6 +58,38 @@ class GeminiClient:
         """True only if an API key is present and SDK client is initialized."""
         return bool(self._client and self.api_key and not settings.DEMO_MODE)
 
+    async def _execute_content_generation(self, contents: str, config: Any = None) -> Any:
+        """
+        Executes content generation using native async client.aio when available,
+        falling back to thread-offloaded synchronous generation.
+        """
+        if hasattr(self._client, "aio") and hasattr(self._client.aio, "models"):
+            if config is not None:
+                return await self._client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config
+                )
+            else:
+                return await self._client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents
+                )
+        else:
+            def _sync():
+                if config is not None:
+                    return self._client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=config
+                    )
+                else:
+                    return self._client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents
+                    )
+            return await asyncio.to_thread(_sync)
+
     async def test_connection(self) -> Dict[str, Any]:
         """
         Safe health check without leaking API keys.
@@ -67,15 +115,12 @@ class GeminiClient:
 
         try:
             start_time = time.time()
-            
-            def _sync_ping():
-                return self._client.models.generate_content(
-                    model=self.model_name,
+            response = await asyncio.wait_for(
+                self._execute_content_generation(
                     contents="Health check. Reply with strictly JSON: {\"status\": \"ok\"}"
-                )
-
-            # Enforce 15-second timeout on connectivity test
-            response = await asyncio.wait_for(asyncio.to_thread(_sync_ping), timeout=15.0)
+                ),
+                timeout=15.0
+            )
             latency = int((time.time() - start_time) * 1000)
 
             if response and response.text:
@@ -103,10 +148,11 @@ class GeminiClient:
                 "latency_ms": 15000
             }
         except Exception as e:
-            logger.error(f"Gemini API test connection failed: {e}")
+            categorized_err = categorize_gemini_error(e)
+            logger.error(f"Gemini API test connection failed: {categorized_err}")
             return {
                 "status": "error",
-                "message": f"Gemini connection failed: {str(e)}",
+                "message": categorized_err,
                 "model": self.model_name,
                 "configured": False,
                 "latency_ms": 0
@@ -117,11 +163,12 @@ class GeminiClient:
         prompt: str,
         system_instruction: str = "",
         temperature: float = 0.3,
-        response_schema: Optional[Any] = None,
-        timeout_seconds: float = 45.0
+        response_schema: Optional[Type[BaseModel]] = None,
+        timeout_seconds: float = 30.0
     ) -> Tuple[Dict[str, Any], int, str, Optional[str]]:
         """
-        Executes structured JSON prompt via Gemini API with async offloading and timeout.
+        Executes structured JSON prompt via Gemini API with async execution, timeout,
+        and optional Pydantic schema validation.
         Returns: (parsed_json, latency_ms, status ['success' | 'fallback_demo' | 'error'], error_message)
         """
         start_time = time.time()
@@ -141,21 +188,12 @@ class GeminiClient:
             }
             if system_instruction:
                 config_args["system_instruction"] = system_instruction
-            if response_schema:
-                config_args["response_schema"] = response_schema
 
             config = types.GenerateContentConfig(**config_args)
 
-            def _sync_generate():
-                return self._client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=config
-                )
-
-            # Execute synchronously in worker thread with timeout to avoid blocking FastAPI event loop
+            # Native async execution with strict timeout
             response = await asyncio.wait_for(
-                asyncio.to_thread(_sync_generate),
+                self._execute_content_generation(contents=prompt, config=config),
                 timeout=timeout_seconds
             )
             latency = int((time.time() - start_time) * 1000)
@@ -174,6 +212,17 @@ class GeminiClient:
             raw_text = raw_text.strip()
 
             parsed = json.loads(raw_text)
+
+            # Validate against Pydantic schema if provided
+            if response_schema:
+                try:
+                    validated = response_schema.model_validate(parsed)
+                    parsed = validated.model_dump()
+                except ValidationError as ve:
+                    logger.warning(f"Gemini output schema validation warning: {ve}")
+                    # Return parsed with warning rather than discarding data if structure matches
+                    pass
+
             return parsed, latency, "success", None
 
         except asyncio.TimeoutError:
@@ -186,7 +235,8 @@ class GeminiClient:
             return {}, latency, "error", f"Malformed JSON from Gemini model: {str(jde)}"
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)
-            logger.error(f"Gemini API call failed: {e}")
-            return {}, latency, "error", str(e)
+            categorized = categorize_gemini_error(e)
+            logger.error(f"Gemini API call failed: {categorized}")
+            return {}, latency, "error", categorized
 
 gemini_client = GeminiClient()

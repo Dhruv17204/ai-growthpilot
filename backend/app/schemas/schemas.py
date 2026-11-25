@@ -295,6 +295,41 @@ class AIActivityResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+# --- Campaign Metric Schemas ---
+class CampaignMetricCreate(BaseModel):
+    campaign_id: Optional[int] = None
+    metric_date: datetime.date
+    channel: str
+    impressions: int = 0
+    clicks: int = 0
+    conversions: int = 0
+    spend: float = 0.0
+    revenue: float = 0.0
+
+class CampaignMetricResponse(BaseModel):
+    id: int
+    campaign_id: Optional[int] = None
+    metric_date: datetime.date
+    channel: str
+    impressions: int
+    clicks: int
+    conversions: int
+    spend: float
+    revenue: float
+    ctr: Optional[float] = None
+    cpl: Optional[float] = None
+    roi: Optional[float] = None
+    is_demo: bool = False
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class CampaignMetricsImportResult(BaseModel):
+    total_rows: int
+    successful_imports: int
+    error_count: int
+    errors: List[str] = []
+
 # --- Analytics Overview Schema ---
 class AnalyticsOverviewResponse(BaseModel):
     total_leads: int
@@ -314,3 +349,7 @@ class AnalyticsOverviewResponse(BaseModel):
     high_priority_leads: List[LeadResponse]
     upcoming_content: List[ContentItemResponse]
     is_demo_data: bool = True
+    has_sufficient_history: bool = True
+    total_spend: float = 0.0
+    total_revenue: float = 0.0
+

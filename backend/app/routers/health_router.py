@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
+from app.auth import require_admin_or_local
 from app.services.gemini_client import gemini_client
 from app.services.seed_data_service import seed_database
 from app.schemas.schemas import HealthResponse, GeminiKeyUpdateRequest
@@ -31,7 +32,7 @@ async def get_ai_config():
         "masked_key": f"...{gemini_client.api_key[-4:]}" if gemini_client.api_key else "Not Configured"
     }
 
-@router.post("/settings/gemini-key")
+@router.post("/settings/gemini-key", dependencies=[Depends(require_admin_or_local)])
 async def update_gemini_key(payload: GeminiKeyUpdateRequest):
     key = payload.gemini_api_key.strip()
     model = payload.gemini_model.strip() if payload.gemini_model else "gemini-2.5-flash"
@@ -42,7 +43,7 @@ async def update_gemini_key(payload: GeminiKeyUpdateRequest):
         "test_result": test_res
     }
 
-@router.post("/settings/reset-demo")
+@router.post("/settings/reset-demo", dependencies=[Depends(require_admin_or_local)])
 def reset_demo_data(db: Session = Depends(get_db)):
     seed_database(db, force_reset=True)
     return {"message": "Database reset and re-seeded with NovaTech Solutions demo data."}

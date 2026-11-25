@@ -9,7 +9,7 @@ from app.main import app
 from app.services.seed_data_service import seed_database
 from app.models.models import (
     BusinessProfile, GrowthStrategy, Campaign, ContentItem,
-    Lead, LeadNote, PromptTemplate, PromptExecution, AIActivity
+    Lead, LeadNote, PromptTemplate, PromptExecution, AIActivity, CampaignMetric
 )
 
 TEST_DB_FILE = "./test_growthpilot.db"
@@ -35,6 +35,7 @@ def setup_test_db():
     db.query(PromptExecution).delete()
     db.query(PromptTemplate).delete()
     db.query(AIActivity).delete()
+    db.query(CampaignMetric).delete()
     db.commit()
     seed_database(db, force_reset=False)
     db.close()

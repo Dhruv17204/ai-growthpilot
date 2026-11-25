@@ -1,3 +1,17 @@
+"""
+Configuration settings for AI GrowthPilot backend.
+
+NOTE ON GEMINI_API_KEY & PROCESS-GLOBAL STATE:
+In this single-user portfolio and assessment platform, GEMINI_API_KEY is maintained as a
+process-global configuration. Dynamic updates via /api/settings/gemini-key update the active
+Gemini client instance in-memory for the running process.
+
+For production multi-tenant deployments:
+1. API keys must NOT be process-global; each organization or user must have an isolated,
+   encrypted key stored in a secrets vault (e.g., AWS Secrets Manager, GCP Secret Manager)
+   or passed per-request.
+2. Administrative actions must be guarded by ADMIN_API_KEY or enterprise OAuth2/OIDC RBAC.
+"""
 import os
 from typing import List
 from pydantic_settings import BaseSettings
@@ -15,6 +29,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     DEMO_MODE: bool = False
+    ADMIN_API_KEY: str = ""
 
     @property
     def cors_origin_list(self) -> List[str]:
