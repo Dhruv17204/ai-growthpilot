@@ -30,6 +30,7 @@ In Phase 4.1, all identified vulnerabilities and gaps have been completely remed
 - **Revocation & Replay Prevention**: When a user logs out (`/api/auth/logout`), the session is marked `is_revoked = True` with a timestamp in the database. Any subsequent requests replaying the old cookie immediately fail with `HTTP 401 Unauthorized: Session expired or revoked`.
 - **Session Roles**: Supports `user` and `admin` roles. Administrative actions (resetting demo data, updating Gemini API keys, deleting campaigns) strictly require `admin` role.
 - **Production Secret Enforcement (Phase 4.2)**: In `ENVIRONMENT=production`, missing or default development secrets and secrets shorter than 32 characters are rejected at application startup with descriptive configuration errors.
+- **Elimination of Fixed Dev Tokens (Phase 4.3)**: Completely removed the hardcoded `local-dev-bypass` token. No fixed strings can authenticate remote or local requests. When `ADMIN_API_KEY` is unset, unauthenticated loopback access is strictly disabled in production, and remote callers fail closed (401/403). In production, unconfigured administrative logins are blocked entirely.
 
 ### 2.2 Double-Submit CSRF Defense
 - **Token Generation**: Signed token in format `csrf:{nonce}:{expiry}:{signature}` issued in cookie `growthpilot_csrf`.

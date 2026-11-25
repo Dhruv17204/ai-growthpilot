@@ -52,6 +52,11 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 detail="Invalid credentials. Incorrect password."
             )
     else:
+        if settings.ENVIRONMENT.lower() == "production":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Login unavailable: ADMIN_PASSWORD or ADMIN_API_KEY must be configured in production."
+            )
         # In local unconfigured mode, any password or empty password creates a local session
         client_ip = get_client_ip(request)
         if client_ip not in LOCAL_HOSTS:

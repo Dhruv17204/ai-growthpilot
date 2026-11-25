@@ -279,3 +279,44 @@ def test_production_mode_requires_database_session_record(monkeypatch):
     finally:
         db.close()
 
+
+def test_hardcoded_dev_bypass_token_is_strictly_rejected(client, monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+
+    # 1. Local client attempting X-API-Key: local-dev-bypass -> 401 Unauthorized
+    res_key = client.get("/api/leads", headers={"X-API-Key": "local-dev-bypass"})
+    assert res_key.status_code == 401
+    assert "Invalid API key" in res_key.json()["detail"]
+
+    # 2. Local client attempting Bearer local-dev-bypass -> 401 Unauthorized
+    res_bearer = client.get("/api/leads", headers={"Authorization": "Bearer local-dev-bypass"})
+    assert res_bearer.status_code == 401
+    assert "Invalid API key" in res_bearer.json()["detail"]
+
+    # 3. Remote client attempting X-API-Key: local-dev-bypass -> 401 Unauthorized
+    with TestClient(client.app, client=("203.0.113.45", 50000)) as remote_client:
+        res_remote = remote_client.get("/api/leads", headers={"X-API-Key": "local-dev-bypass"})
+        assert res_remote.status_code == 401
+        assert "Invalid API key" in res_remote.json()["detail"]
+
+
+def test_unauthenticated_loopback_access_strictly_disabled_in_production(client, monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+
+    # Local loopback client attempting unauthenticated access in production -> 401 Unauthorized
+    res = client.get("/api/leads")
+    assert res.status_code == 401
+    assert "Unauthenticated loopback access is disabled in production" in res.json()["detail"]
+
+
+def test_login_fails_in_production_when_admin_credentials_unconfigured(client, monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+
+    res = client.post("/api/auth/login", json={"password": "any-password"})
+    assert res.status_code == 403
+    assert "must be configured in production" in res.json()["detail"]
+
+

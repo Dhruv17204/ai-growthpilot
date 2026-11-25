@@ -191,8 +191,6 @@ def require_authenticated_user(
     if provided_key:
         if admin_key and secrets.compare_digest(provided_key, admin_key):
             return True
-        elif not admin_key and provided_key == "local-dev-bypass":
-            return True
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -223,6 +221,12 @@ def require_authenticated_user(
     # 3. Local Loopback Fallback (Only valid when ADMIN_API_KEY is not set)
     client_ip = get_client_ip(request)
     if not admin_key:
+        if settings.ENVIRONMENT.lower() == "production":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required: Unauthenticated loopback access is disabled in production.",
+                headers={"WWW-Authenticate": "Bearer or X-API-Key"}
+            )
         if client_ip in LOCAL_HOSTS:
             return True
         # Remote visitor accessing unauthenticated instance fails closed

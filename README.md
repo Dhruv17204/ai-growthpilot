@@ -5,8 +5,8 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-60%20Passed-success.svg)](https://pytest.org)
-[![Coverage](https://img.shields.io/badge/Coverage-82%25-brightgreen.svg)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-63%20Passed-success.svg)](https://pytest.org)
+[![Coverage](https://img.shields.io/badge/Coverage-83%25-brightgreen.svg)](https://pytest.org)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
 **AI GrowthPilot** is a full-stack, enterprise-grade business growth and marketing automation SaaS platform engineered specifically for small IT companies, software agencies, AI consultancies, and digital service providers.
@@ -238,7 +238,7 @@ AI GrowthPilot explicitly separates three operational generation states:
 
 ---
 
-## 7. Automated Test Suite (60 Tests Passing — 82% Code Coverage)
+## 7. Automated Test Suite (63 Tests Passing — 83% Code Coverage)
 
 Run the automated backend test suite with coverage:
 ```powershell
@@ -246,9 +246,9 @@ cd backend
 .\venv\Scripts\pytest -v --cov=app --cov-report=term-missing
 ```
 
-**Results (60/60 Passed, 82% Coverage):**
-- **Authentication & CSRF (`tests/test_auth.py` — 16 Tests):**
-  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), and replayed revoked session rejection (401).
+**Results (63/63 Passed, 83% Coverage):**
+- **Authentication & CSRF (`tests/test_auth.py` — 19 Tests):**
+  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), replayed revoked session rejection (401), strict rejection of hardcoded development bypass tokens (`local-dev-bypass`), production loopback unauthenticated access lockdown, and unconfigured production login prevention.
 - **Analytics & Data Ingestion (`tests/test_analytics.py` — 6 Tests):**
   - Empty baseline resilience, global spend/revenue aggregation, channel-only metric aggregation, campaign deletion metric preservation, strict CSV column/date/value/duplicate validation.
 - **Lead Qualification Rubric (`tests/test_scoring.py` — 6 Tests):**
