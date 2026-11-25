@@ -1,9 +1,13 @@
-import os
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.auth import (
+    CSRF_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    create_csrf_token,
+)
 from app.database import Base, get_db
 from app.main import app
 from app.services.seed_data_service import seed_database
@@ -55,12 +59,6 @@ def override_get_db():
 
 app.dependency_overrides[get_db] = override_get_db
 
-from app.auth import (
-    create_session_token,
-    create_csrf_token,
-    SESSION_COOKIE_NAME,
-    CSRF_COOKIE_NAME,
-)
 
 @pytest.fixture
 def client():

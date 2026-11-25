@@ -1,6 +1,4 @@
-import io
 import datetime
-import pytest
 import pandas as pd
 from app.models.models import Campaign, CampaignMetric
 from app.services.analytics_service import get_analytics_overview, import_campaign_metrics

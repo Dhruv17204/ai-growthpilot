@@ -1,9 +1,9 @@
-import json
 import logging
-from typing import Dict, Any, List, Optional
+import re
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
-from app.models.models import PromptTemplate, PromptExecution
-from app.schemas.schemas import PromptTemplateResponse, PromptExecutionResponse
+from app.models.models import PromptExecution
 
 logger = logging.getLogger("growthpilot.prompts")
 
@@ -154,9 +154,6 @@ Return JSON with keys:
         "is_active": True
     }
 ]
-
-import re
-from datetime import datetime, timedelta
 
 EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 PHONE_PATTERN = re.compile(r'(?<![A-Za-z0-9])(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![A-Za-z0-9])')

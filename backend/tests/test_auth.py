@@ -1,4 +1,4 @@
-import time
+import math
 import pytest
 from fastapi.testclient import TestClient
 from app.config import settings
@@ -6,7 +6,6 @@ from app.auth import (
     create_session_token,
     create_csrf_token,
     validate_session_token,
-    validate_csrf_token,
     SESSION_COOKIE_NAME,
     CSRF_COOKIE_NAME,
 )
@@ -385,6 +384,252 @@ def test_login_rate_limiting_and_brute_force_lockout(client, monkeypatch):
     res_success = client.post("/api/auth/login", json={"password": "CorrectPassword2026!"})
     assert res_success.status_code == 200
     assert res_success.json()["authenticated"] is True
+
+
+def test_sliding_window_rate_limiter_deterministic():
+    """
+    Deterministic unit test for LoginRateLimiter verifying:
+    - Exactly 5 failed attempts allowed in a rolling 60s window.
+    - 6th attempt receives 429 with correct Retry-After.
+    - Expiration of failures after 60s rolls the window forward.
+    - Failures spread across >60s do not accumulate towards lockout.
+    - Separate IP addresses maintain isolated failure windows.
+    - Successful login resets tracking.
+    """
+    from app.services.rate_limiter import LoginRateLimiter
+
+    current_time = 1000.0
+
+    def mock_clock() -> float:
+        return current_time
+
+    limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0, clock=mock_clock)
+
+    ip1 = "192.168.1.10"
+    ip2 = "192.168.1.20"
+
+    # 1. First 4 failures on IP 1
+    for i in range(4):
+        current_time += 1.0
+        allowed, retry = limiter.check_allowed(ip1)
+        assert allowed is True
+        assert retry == 0
+        count, locked_retry = limiter.record_failure(ip1)
+        assert count == i + 1
+        assert locked_retry is None
+
+    # 2. 5th failure on IP 1 hits threshold
+    current_time += 1.0
+    allowed, retry = limiter.check_allowed(ip1)
+    assert allowed is True
+    count, locked_retry = limiter.record_failure(ip1)
+    assert count == 5
+    assert locked_retry is not None
+    assert locked_retry > 0
+
+    # 3. Next attempt (6th) is rejected with 429 Retry-After
+    allowed, retry = limiter.check_allowed(ip1)
+    assert allowed is False
+    assert retry == math.ceil(1001.0 + 60.0 - current_time)
+
+    # 4. Independent IP 2 is unaffected
+    allowed_ip2, retry_ip2 = limiter.check_allowed(ip2)
+    assert allowed_ip2 is True
+    assert retry_ip2 == 0
+
+    # 5. Advance time to 1061.5: cutoff is 1061.5 - 60 = 1001.5.
+    # Only t=1001 has expired. 4 failures remain in window [1002, 1003, 1004, 1005].
+    current_time = 1061.5
+    allowed, retry = limiter.check_allowed(ip1)
+    assert allowed is True
+    assert retry == 0
+
+    # Recording another failure reaches 5 again
+    count, locked_retry = limiter.record_failure(ip1)
+    assert count == 5
+    assert locked_retry is not None
+
+    # 6. Success resets IP 1 completely
+    limiter.record_success(ip1)
+    allowed, retry = limiter.check_allowed(ip1)
+    assert allowed is True
+    assert retry == 0
+
+
+def test_logout_csrf_protection_scenarios(client, monkeypatch):
+    """
+    Dedicated test suite for /auth/logout CSRF protection:
+    - Session-backed logout requires both CSRF header and cookie.
+    - Constant-time comparison between header and cookie.
+    - Validates signature, expiry, and session binding.
+    - Rejects missing, mismatched, tampered, or cross-session tokens with HTTP 403.
+    - Session is NOT revoked when CSRF check fails.
+    - Legitimate logout revokes session server-side.
+    - Expired/unauthenticated requests clean up cookies gracefully.
+    """
+    from app.models.models import UserSession
+    from tests.conftest import TestingSessionLocal
+
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "SecureLogoutTestPass2026!")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "test_admin_key")
+
+    def login_and_get_session():
+        client.cookies.clear()
+        res = client.post("/api/auth/login", json={"password": "SecureLogoutTestPass2026!"})
+        assert res.status_code == 200
+        sess_token = res.cookies[SESSION_COOKIE_NAME]
+        csrf_tok = res.cookies[CSRF_COOKIE_NAME]
+        sess_id = sess_token.split(":")[1]
+        client.cookies.clear()
+        return sess_token, csrf_tok, sess_id
+
+    # Scenario 1: Active session, missing CSRF header -> 403, session NOT revoked
+    sess_token, csrf_tok, sess_id = login_and_get_session()
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token, CSRF_COOKIE_NAME: csrf_tok}
+    )
+    assert res.status_code == 403
+    assert "Missing CSRF token" in res.json()["detail"]
+    # Verify session is STILL active in DB
+    db = TestingSessionLocal()
+    try:
+        record = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record is not None and not record.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 2: Active session, missing CSRF cookie -> 403, session NOT revoked
+    client.cookies.clear()
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token},
+        headers={"X-CSRF-Token": csrf_tok}
+    )
+    assert res.status_code == 403
+    assert "Missing CSRF token" in res.json()["detail"]
+    db = TestingSessionLocal()
+    try:
+        record = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record is not None and not record.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 3: Mismatched CSRF header and cookie -> 403, session NOT revoked
+    other_csrf = create_csrf_token(session_id="other_session")
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token, CSRF_COOKIE_NAME: csrf_tok},
+        headers={"X-CSRF-Token": other_csrf}
+    )
+    assert res.status_code == 403
+    assert "Token mismatch" in res.json()["detail"]
+    db = TestingSessionLocal()
+    try:
+        record = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record is not None and not record.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 4: Tampered signature -> 403, session NOT revoked
+    tampered_csrf = csrf_tok[:-4] + "dead"
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token, CSRF_COOKIE_NAME: tampered_csrf},
+        headers={"X-CSRF-Token": tampered_csrf}
+    )
+    assert res.status_code == 403
+    assert "Invalid, expired, or session-mismatched" in res.json()["detail"]
+    db = TestingSessionLocal()
+    try:
+        record = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record is not None and not record.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 5: Cross-session CSRF token (valid signature, but bound to session B) -> 403, session NOT revoked
+    sess_b_token, csrf_b, sess_b_id = login_and_get_session()
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token, CSRF_COOKIE_NAME: csrf_b},
+        headers={"X-CSRF-Token": csrf_b}
+    )
+    assert res.status_code == 403
+    assert "Invalid, expired, or session-mismatched" in res.json()["detail"]
+    db = TestingSessionLocal()
+    try:
+        record_a = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record_a is not None and not record_a.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 6: Legitimate logout with exact matching session-bound CSRF -> 200, session revoked
+    res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: sess_token, CSRF_COOKIE_NAME: csrf_tok},
+        headers={"X-CSRF-Token": csrf_tok}
+    )
+    assert res.status_code == 200
+    assert "Logged out successfully" in res.json()["message"]
+    db = TestingSessionLocal()
+    try:
+        record_a = db.query(UserSession).filter(UserSession.session_id == sess_id).first()
+        assert record_a is not None and record_a.is_revoked
+    finally:
+        db.close()
+
+    # Scenario 7: Unauthenticated logout or dead session -> 200, cleans cookies
+    res = client.post("/api/auth/logout")
+    assert res.status_code == 200
+    assert "Logged out successfully" in res.json()["message"]
+
+
+def test_rfc9110_http_methods_and_csrf_policy(client, monkeypatch):
+    """
+    Verifies that per RFC 9110 and application policy:
+    - TRACE is explicitly rejected with 405 Method Not Allowed.
+    - Non-exempt / unrecognized methods (CUSTOM, PURGE) fail closed and require CSRF.
+    - Safe methods (GET, HEAD, OPTIONS) bypass CSRF.
+    """
+    from app.auth import create_server_session
+    from tests.conftest import TestingSessionLocal
+
+    db = TestingSessionLocal()
+    try:
+        session_token, session_id = create_server_session(db, role="admin")
+    finally:
+        db.close()
+
+    # 1. TRACE method on application endpoint returns 405 Method Not Allowed
+    res_trace = client.request("TRACE", "/api/leads", cookies={SESSION_COOKIE_NAME: session_token})
+    assert res_trace.status_code == 405
+
+    # 2. Non-exempt / unexpected method (e.g. PURGE) tested against require_authenticated_user
+    # proves that arbitrary/unrecognized methods fail closed with 403 when CSRF is omitted
+    from unittest.mock import MagicMock
+    from fastapi import HTTPException
+    from app.auth import require_authenticated_user
+
+    mock_request = MagicMock()
+    mock_request.method = "PURGE"
+    mock_request.cookies = {SESSION_COOKIE_NAME: session_token}
+    mock_request.headers = {}
+    with pytest.raises(HTTPException) as exc_info:
+        require_authenticated_user(mock_request, header_key=None, bearer_creds=None, db=db)
+    assert exc_info.value.status_code == 403
+    assert "CSRF validation failed" in exc_info.value.detail
+
+    # 3. Safe methods (GET, HEAD, OPTIONS) bypass CSRF per RFC 9110 allowlist
+    for safe_method in ["GET", "HEAD", "OPTIONS"]:
+        mock_safe_req = MagicMock()
+        mock_safe_req.method = safe_method
+        mock_safe_req.cookies = {SESSION_COOKIE_NAME: session_token}
+        mock_safe_req.headers = {}
+        assert require_authenticated_user(mock_safe_req, header_key=None, bearer_creds=None, db=db) is True
+
+    # 4. HTTP endpoint invocation: safe GET request bypasses CSRF and returns 200
+    res_get = client.get("/api/leads", cookies={SESSION_COOKIE_NAME: session_token})
+    assert res_get.status_code == 200
 
 
 

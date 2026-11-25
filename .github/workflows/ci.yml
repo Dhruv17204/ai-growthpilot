@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
@@ -28,6 +28,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Run Ruff Lint Checks
+        run: |
+          ruff check app tests
+
+      - name: Security Audit Python Dependencies
+        run: |
+          pip-audit --local
 
       - name: Run Pytest with Coverage
         run: |
@@ -42,10 +50,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: "npm"
@@ -53,6 +61,9 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
+
+      - name: Security Audit Dependencies
+        run: npm audit --audit-level=moderate
 
       - name: Type Check & Production Build
         run: npm run build
@@ -67,10 +78,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build Docker Image
         run: |
@@ -179,14 +190,20 @@ jobs:
           db.close()
           "
 
-          # 3. Restart container
+          # 3. Restart container and poll for health readiness
           echo "Restarting container..."
           docker restart growthpilot-test
-          sleep 5
-          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"'
+          for i in {1..30}; do
+            if curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"' > /dev/null 2>&1; then
+              echo "Container restarted and healthy!"
+              break
+            fi
+            echo "Waiting for container readiness after restart... ($i/30)"
+            sleep 1
+          done
 
           # 4. Query the same record again after restart
-          # 5. Confirm original value is preserved
+          # 5. Confirm original values are preserved across multiple fields
           # 6. Clean up test data safely
           echo "Verifying record persistence and cleaning up..."
           docker exec growthpilot-test python -c "
@@ -196,8 +213,12 @@ jobs:
           record = db.query(Campaign).filter(Campaign.id == $RECORD_ID).first()
           assert record is not None, 'FAILURE: Record was lost after container restart!'
           assert record.name == 'Persistence-Verification-Unique-Campaign', 'FAILURE: Record name was corrupted!'
-          assert record.product_service == 'Docker Volume Persistence', 'FAILURE: Data mismatch!'
-          print('SUCCESS: Record exactly preserved after container restart.')
+          assert record.product_service == 'Docker Volume Persistence', 'FAILURE: Data mismatch on product_service!'
+          assert record.target_audience == 'DevOps Verifiers', 'FAILURE: Data mismatch on target_audience!'
+          assert record.objective == 'Verify database state across restart', 'FAILURE: Data mismatch on objective!'
+          assert record.channel == 'Email', 'FAILURE: Data mismatch on channel!'
+          assert record.status == 'Active', 'FAILURE: Data mismatch on status!'
+          print('SUCCESS: Record exactly preserved with all verified fields after container restart.')
           db.delete(record)
           db.commit()
           db.close()

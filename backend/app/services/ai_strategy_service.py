@@ -1,9 +1,8 @@
-import json
 import logging
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.models.models import BusinessProfile, GrowthStrategy, AIActivity
+from app.models.models import GrowthStrategy, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
 from app.schemas.schemas import StrategyAIResponse

@@ -11,11 +11,11 @@ from app.config import settings
 from app.database import get_db
 from app.services.rate_limiter import login_rate_limiter
 from app.auth import (
-    create_session_token,
     create_server_session,
     revoke_session,
     validate_session_token,
     create_csrf_token,
+    validate_csrf_token,
     get_client_ip,
     SESSION_COOKIE_NAME,
     CSRF_COOKIE_NAME,
@@ -120,9 +120,32 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
     if session_cookie:
-        parts = session_cookie.split(":")
-        session_id = parts[1] if len(parts) == 4 else (parts[0] if len(parts) == 3 else None)
-        if session_id:
+        session_info = validate_session_token(session_cookie, db=db)
+        if session_info:
+            session_id = session_info["session_id"]
+            csrf_header = request.headers.get("X-CSRF-Token")
+            csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+
+            # 1. Both header and cookie must be provided
+            if not csrf_header or not csrf_cookie:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="CSRF validation failed on logout: Missing CSRF token in header or cookie."
+                )
+            # 2. Header and cookie must match (Double Submit)
+            if not secrets.compare_digest(csrf_header, csrf_cookie):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="CSRF validation failed on logout: Token mismatch between header and cookie."
+                )
+            # 3. Signature, expiry, and session binding
+            if not validate_csrf_token(csrf_header, expected_session_id=session_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="CSRF validation failed on logout: Invalid, expired, or session-mismatched CSRF token."
+                )
+
+            # Revoke session only after CSRF checks pass
             revoke_session(db, session_id)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")

@@ -8,13 +8,12 @@ from app.models.models import Lead, Campaign, ContentItem, AIActivity, CampaignM
 
 def get_analytics_overview(db: Session) -> Dict[str, Any]:
     total_leads = db.query(Lead).count()
-    high_priority_leads = db.query(Lead).filter(Lead.qualification_category == "High Priority").count()
     qualified_leads = db.query(Lead).filter(
         (Lead.qualification_category == "High Priority") | (Lead.status == "Qualified")
     ).count()
 
     qualification_rate = round((qualified_leads / total_leads * 100), 1) if total_leads > 0 else 0.0
-    
+
     avg_score_res = db.query(func.avg(Lead.score)).scalar()
     avg_lead_score = round(float(avg_score_res or 0), 1)
 
@@ -55,7 +54,7 @@ def get_analytics_overview(db: Session) -> Dict[str, Any]:
     # Authentic Lead Acquisition Trend derived from database creation dates (Zero Fabrication)
     trend_dict: Dict[str, Dict[str, Any]] = {}
     all_leads = db.query(Lead.created_at, Lead.qualification_category, Lead.status).order_by(Lead.created_at.asc()).all()
-    
+
     for created_at, cat, status in all_leads:
         if not created_at:
             continue
@@ -87,14 +86,14 @@ def get_analytics_overview(db: Session) -> Dict[str, Any]:
     for c in campaigns:
         # Aggregate persisted metrics for this specific campaign
         metrics = db.query(CampaignMetric).filter(CampaignMetric.campaign_id == c.id).all()
-        
+
         if metrics:
             imp = sum(m.impressions for m in metrics)
             clk = sum(m.clicks for m in metrics)
             conv = sum(m.conversions for m in metrics)
             sp = sum(m.spend for m in metrics)
             rev = sum(m.revenue for m in metrics)
-            
+
             ctr = round((clk / imp * 100), 2) if imp > 0 else None
             cpl = round((sp / conv), 2) if conv > 0 else None
             roi = round(((rev - sp) / sp * 100), 1) if sp > 0 else None
@@ -135,7 +134,7 @@ def get_analytics_overview(db: Session) -> Dict[str, Any]:
             })
 
     # Include unassigned channel-level metrics (campaign_id is None)
-    unassigned_metrics = db.query(CampaignMetric).filter(CampaignMetric.campaign_id == None).all()
+    unassigned_metrics = db.query(CampaignMetric).filter(CampaignMetric.campaign_id.is_(None)).all()
     channel_groups: Dict[str, List[CampaignMetric]] = {}
     for m in unassigned_metrics:
         ch = m.channel or "Unassigned"
@@ -186,7 +185,7 @@ def get_analytics_overview(db: Session) -> Dict[str, Any]:
     ]
 
     # Authentic demonstration data determination
-    demo_count = db.query(Lead).filter(Lead.is_demo == True).count()
+    demo_count = db.query(Lead).filter(Lead.is_demo.is_(True)).count()
     is_demo_data = (demo_count / total_leads > 0.5) if total_leads > 0 else True
 
     return {
@@ -215,7 +214,7 @@ def get_analytics_overview(db: Session) -> Dict[str, Any]:
 def import_campaign_metrics(db: Session, df: pd.DataFrame, is_demo: bool = False) -> Dict[str, Any]:
     """
     Imports and strictly validates campaign metrics CSV data into CampaignMetric persistence.
-    
+
     Validation Rules:
     - Required columns: metric_date, channel, impressions, clicks, conversions, spend, revenue.
     - Dates must be parseable YYYY-MM-DD (no silent fallback to today).

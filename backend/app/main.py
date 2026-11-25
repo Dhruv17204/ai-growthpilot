@@ -36,14 +36,14 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
-    
+
     # Seed default demonstration data if not present
     db = SessionLocal()
     try:
         seed_database(db, force_reset=False)
     finally:
         db.close()
-    
+
     # Initialize and start periodic retention worker (runs initial cleanup + background periodic cycle)
     worker = PeriodicRetentionWorker(
         interval_seconds=86400,

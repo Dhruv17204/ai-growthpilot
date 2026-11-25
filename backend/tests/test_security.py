@@ -1,6 +1,6 @@
 import io
 import pytest
-from app.services.prompt_service import redact_sensitive_text, redact_structure, log_prompt_execution
+from app.services.prompt_service import redact_sensitive_text, redact_structure
 from app.config import settings
 
 def test_prompt_redaction_removes_sensitive_data():

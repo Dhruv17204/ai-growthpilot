@@ -8,9 +8,9 @@ from app.database import get_db
 from app.auth import require_authenticated_user
 from app.models.models import Lead, BusinessProfile, LeadNote
 from app.schemas.schemas import (
-    LeadResponse, LeadCreate, LeadUpdate, LeadNoteCreate, LeadNoteResponse, CSVImportResult
+    LeadResponse, LeadUpdate, LeadNoteCreate, LeadNoteResponse, CSVImportResult
 )
-from app.services.lead_scoring_service import process_leads_csv, score_single_lead, heuristic_lead_score
+from app.services.lead_scoring_service import process_leads_csv, score_single_lead
 
 router = APIRouter(prefix="/leads", tags=["Lead Intelligence"], dependencies=[Depends(require_authenticated_user)])
 
@@ -110,23 +110,23 @@ def export_leads_csv(db: Session = Depends(get_db)):
         "Location", "Company Size", "Lead Source", "Score", "Priority",
         "Status", "Business Fit Summary", "Suggested Next Action"
     ])
-    for l in leads:
+    for lead in leads:
         # Sanitize every field to prevent CSV formula injection
         writer.writerow([
-            sanitize_csv_cell(l.name),
-            sanitize_csv_cell(l.company),
-            sanitize_csv_cell(l.email),
-            sanitize_csv_cell(l.website),
-            sanitize_csv_cell(l.industry),
-            sanitize_csv_cell(l.job_title),
-            sanitize_csv_cell(l.location),
-            sanitize_csv_cell(l.company_size),
-            sanitize_csv_cell(l.lead_source),
-            l.score,
-            l.qualification_category,
-            l.status,
-            sanitize_csv_cell(l.business_fit_summary),
-            sanitize_csv_cell(l.suggested_next_action)
+            sanitize_csv_cell(lead.name),
+            sanitize_csv_cell(lead.company),
+            sanitize_csv_cell(lead.email),
+            sanitize_csv_cell(lead.website),
+            sanitize_csv_cell(lead.industry),
+            sanitize_csv_cell(lead.job_title),
+            sanitize_csv_cell(lead.location),
+            sanitize_csv_cell(lead.company_size),
+            sanitize_csv_cell(lead.lead_source),
+            lead.score,
+            lead.qualification_category,
+            lead.status,
+            sanitize_csv_cell(lead.business_fit_summary),
+            sanitize_csv_cell(lead.suggested_next_action)
         ])
 
     output.seek(0)

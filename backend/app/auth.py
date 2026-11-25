@@ -21,6 +21,14 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 LOCAL_HOSTS: Set[str] = {"127.0.0.1", "localhost", "::1", "testclient"}
+
+# RFC 9110 Section 9.2.1 defines safe HTTP methods (GET, HEAD, OPTIONS, TRACE).
+# In AI GrowthPilot:
+# - TRACE is explicitly forbidden to prevent Cross-Site Tracing (XST) attacks.
+# - Only GET, HEAD, and OPTIONS are exempt from CSRF checks.
+# - All other methods (POST, PUT, DELETE, PATCH, and any unrecognized or non-standard
+#   methods) fail closed and MUST validate CSRF tokens to prevent bypasses.
+CSRF_EXEMPT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 STATE_CHANGING_METHODS: Set[str] = {"POST", "PUT", "DELETE", "PATCH"}
 
 SESSION_COOKIE_NAME = "growthpilot_session"
@@ -187,7 +195,7 @@ def require_authenticated_user(
 ) -> bool:
     """
     Unified security dependency protecting authenticated endpoints.
-    
+
     Authentication mechanisms:
     1. Header authentication: X-API-Key or Bearer token matched via constant-time comparison.
     2. Server-managed session: Valid HttpOnly session cookie ('growthpilot_session') with server-side revocation check.
@@ -197,6 +205,13 @@ def require_authenticated_user(
     4. Remote requests without valid credentials fail closed (401 or 403).
     """
     admin_key = settings.ADMIN_API_KEY.strip() if settings.ADMIN_API_KEY else ""
+
+    # RFC 9110: Reject TRACE immediately to prevent Cross-Site Tracing (XST)
+    if request.method == "TRACE":
+        raise HTTPException(
+            status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+            detail="Method Not Allowed: TRACE method is disabled for security."
+        )
 
     # 1. Check API Key / Bearer Token Header
     provided_key = None
@@ -221,8 +236,8 @@ def require_authenticated_user(
         session_info = validate_session_token(session_cookie, db=db)
         if session_info:
             session_id = session_info.get("session_id")
-            # Enforce CSRF protection for state-changing HTTP methods
-            if request.method in STATE_CHANGING_METHODS:
+            # Enforce CSRF protection for all non-exempt methods (fail closed per RFC 9110 policy)
+            if request.method not in CSRF_EXEMPT_METHODS:
                 csrf_header = request.headers.get("X-CSRF-Token")
                 csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
                 # 1. Both header and cookie must be present

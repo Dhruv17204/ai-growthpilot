@@ -1,5 +1,4 @@
 import io
-import pytest
 
 def test_health_check(client):
     res = client.get("/api/health")
@@ -247,7 +246,7 @@ def test_ai_error_handling_when_gemini_fails(client):
     with patch("app.services.gemini_client.gemini_client.generate_structured_json", new_callable=AsyncMock) as mock_gemini:
         with patch("app.services.gemini_client.gemini_client.is_configured", return_value=True):
             mock_gemini.return_value = (None, 150, "error", "API Key Invalid or Quota Exhausted")
-            
+
             res = client.post("/api/ai/strategy", json={
                 "profile_override": {
                     "company_name": "Test Enterprise",

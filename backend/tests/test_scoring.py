@@ -1,4 +1,3 @@
-import pytest
 from app.services.lead_scoring_service import heuristic_lead_score, matches_token, normalize_geo
 from app.models.models import BusinessProfile
 

@@ -16,7 +16,7 @@ def seed_database(db: Session, force_reset: bool = False):
     benchmark prompt iterations, campaigns, content items, and scored leads.
     All data is clearly labelled with is_demo=True.
     """
-    existing_profile = db.query(BusinessProfile).filter(BusinessProfile.is_demo == True).first()
+    existing_profile = db.query(BusinessProfile).filter(BusinessProfile.is_demo.is_(True)).first()
     if existing_profile and not force_reset:
         logger.info("Database already seeded with demo profile. Skipping initial seeding.")
         return
@@ -24,18 +24,18 @@ def seed_database(db: Session, force_reset: bool = False):
     if force_reset:
         logger.info("Force resetting demo records for clean seed (preserving user-created data)...")
         # Only delete demo records so user leads, campaigns, content, and strategies are preserved
-        demo_lead_ids = [l.id for l in db.query(Lead.id).filter(Lead.is_demo == True).all()]
+        demo_lead_ids = [row.id for row in db.query(Lead.id).filter(Lead.is_demo.is_(True)).all()]
         if demo_lead_ids:
             db.query(LeadNote).filter(LeadNote.lead_id.in_(demo_lead_ids)).delete(synchronize_session=False)
-        db.query(Lead).filter(Lead.is_demo == True).delete(synchronize_session=False)
-        db.query(ContentItem).filter(ContentItem.is_demo == True).delete(synchronize_session=False)
-        db.query(Campaign).filter(Campaign.is_demo == True).delete(synchronize_session=False)
-        db.query(CampaignMetric).filter(CampaignMetric.is_demo == True).delete(synchronize_session=False)
-        db.query(GrowthStrategy).filter(GrowthStrategy.is_demo == True).delete(synchronize_session=False)
-        db.query(BusinessProfile).filter(BusinessProfile.is_demo == True).delete(synchronize_session=False)
-        db.query(PromptExecution).filter(PromptExecution.is_example == True).delete(synchronize_session=False)
+        db.query(Lead).filter(Lead.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(ContentItem).filter(ContentItem.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(Campaign).filter(Campaign.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(CampaignMetric).filter(CampaignMetric.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(GrowthStrategy).filter(GrowthStrategy.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(BusinessProfile).filter(BusinessProfile.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(PromptExecution).filter(PromptExecution.is_example.is_(True)).delete(synchronize_session=False)
         db.query(PromptTemplate).delete(synchronize_session=False)
-        db.query(AIActivity).filter(AIActivity.is_demo == True).delete(synchronize_session=False)
+        db.query(AIActivity).filter(AIActivity.is_demo.is_(True)).delete(synchronize_session=False)
         db.commit()
 
     # 1. Seed Business Profile (NovaTech Solutions)

@@ -1,13 +1,11 @@
 import io
 import re
-import csv
-import json
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import HTTPException
 import pandas as pd
 from sqlalchemy.orm import Session
-from app.models.models import Lead, BusinessProfile, AIActivity, LeadNote
+from app.models.models import Lead, BusinessProfile, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
 from app.schemas.schemas import LeadScoringAIResponse
@@ -175,7 +173,7 @@ def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile
     # 3. Geographic Match (Max 20 pts - 20%)
     norm_loc = normalize_geo(loc)
     seller_has_geos = bool(profile and profile.target_geography and any(g.strip() for g in profile.target_geography))
-    
+
     if seller_has_geos:
         target_geos = [normalize_geo(g) for g in profile.target_geography if g.strip()]
         if norm_loc in target_geos:
