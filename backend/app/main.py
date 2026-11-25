@@ -110,7 +110,7 @@ if os.path.exists(_FRONTEND_DIST):
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def serve_spa_routes(full_path: str):
         # Do not intercept API or documentation routes
         if full_path.startswith("api") or full_path in ("docs", "openapi.json"):
@@ -128,7 +128,7 @@ if os.path.exists(_FRONTEND_DIST):
 
         raise HTTPException(status_code=404, detail="Frontend assets not found.")
 else:
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     def root():
         return {
             "app": "AI GrowthPilot",

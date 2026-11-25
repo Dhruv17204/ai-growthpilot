@@ -107,8 +107,12 @@ jobs:
 
       - name: Verify Root & API Health Endpoints
         run: |
-          curl -s -f -I http://127.0.0.1:8000/ | grep -E "HTTP/(1\.1|2) 200"
-          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"ok"'
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Expected 200 for root, got $HTTP_STATUS"
+            exit 1
+          fi
+          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"'
 
       - name: Verify React SPA Deep Routes
         run: |
@@ -140,7 +144,7 @@ jobs:
           echo "Restarting container to verify state persistence..."
           docker restart growthpilot-test
           sleep 5
-          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"ok"'
+          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"'
           test -f /tmp/growthpilot-data/growthpilot.db
           echo "SQLite database persisted across container restart."
 
