@@ -199,3 +199,17 @@ class CampaignMetric(Base):
 
     campaign = relationship("Campaign", backref="metrics")
 
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(64), unique=True, index=True, nullable=False)
+    role = Column(String(20), default="admin", nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    is_revoked = Column(Boolean, default=False, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+    client_ip = Column(String(50), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+

@@ -6,10 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import settings
+from app.config import settings, validate_production_session_secret
 from app.database import engine, Base, SessionLocal
 from app.services.seed_data_service import seed_database
-from app.services.prompt_service import clean_old_prompt_executions
+from app.services.retention_worker import PeriodicRetentionWorker
 from app.routers import (
     auth_router,
     health_router,
@@ -31,6 +31,9 @@ logger = logging.getLogger("growthpilot")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Enforce production security policies at startup
+    validate_production_session_secret(settings.SESSION_SECRET, settings.ENVIRONMENT)
+
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
     
@@ -38,16 +41,25 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         seed_database(db, force_reset=False)
-        # 30-Day prompt execution data retention cleanup on startup
-        deleted_prompts = clean_old_prompt_executions(db, days=30)
-        if deleted_prompts > 0:
-            logger.info(f"Cleaned {deleted_prompts} expired prompt executions per 30-day retention policy.")
     finally:
         db.close()
     
+    # Initialize and start periodic retention worker (runs initial cleanup + background periodic cycle)
+    worker = PeriodicRetentionWorker(
+        interval_seconds=86400,
+        retention_days=30,
+        session_factory=SessionLocal
+    )
+    worker.run_cleanup_once()
+    worker.start()
+    app.state.retention_worker = worker
+
     logger.info("AI GrowthPilot Backend successfully initialized.")
     yield
-    logger.info("AI GrowthPilot Backend shutting down.")
+    logger.info("AI GrowthPilot Backend shutting down...")
+    if hasattr(app.state, "retention_worker") and app.state.retention_worker:
+        await app.state.retention_worker.stop()
+    logger.info("AI GrowthPilot Backend shutdown complete.")
 
 app = FastAPI(
     title="AI GrowthPilot API",

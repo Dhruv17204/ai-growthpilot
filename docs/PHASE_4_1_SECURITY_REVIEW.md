@@ -23,11 +23,13 @@ In Phase 4.1, all identified vulnerabilities and gaps have been completely remed
 
 ## 2. Authentication, Session & CSRF Architecture (P0)
 
-### 2.1 Cryptographic Session Tokens
-- **Mechanism**: HMAC-SHA256 signed expiring tokens in format `{role}:{session_id}:{expiry}:{signature}`.
+### 2.1 Cryptographic Session Tokens & Server-Side Revocation
+- **Mechanism**: HMAC-SHA256 signed expiring tokens in format `{role}:{session_id}:{expiry}:{signature}` backed by server-side `UserSession` database records.
 - **Storage**: HttpOnly, SameSite=Lax (Secure in production) cookie named `growthpilot_session`.
-- **Validation**: Constant-time signature verification (`secrets.compare_digest`) and wall-clock expiry check (`SESSION_MAX_AGE_SECONDS`, default 24 hours).
+- **Validation**: Constant-time signature verification (`secrets.compare_digest`), wall-clock expiry check (`SESSION_MAX_AGE_SECONDS`), and server-side database status validation. In production environments, an active corresponding `user_sessions` table record is strictly required.
+- **Revocation & Replay Prevention**: When a user logs out (`/api/auth/logout`), the session is marked `is_revoked = True` with a timestamp in the database. Any subsequent requests replaying the old cookie immediately fail with `HTTP 401 Unauthorized: Session expired or revoked`.
 - **Session Roles**: Supports `user` and `admin` roles. Administrative actions (resetting demo data, updating Gemini API keys, deleting campaigns) strictly require `admin` role.
+- **Production Secret Enforcement (Phase 4.2)**: In `ENVIRONMENT=production`, missing or default development secrets and secrets shorter than 32 characters are rejected at application startup with descriptive configuration errors.
 
 ### 2.2 Double-Submit CSRF Defense
 - **Token Generation**: Signed token in format `csrf:{nonce}:{expiry}:{signature}` issued in cookie `growthpilot_csrf`.

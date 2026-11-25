@@ -1,17 +1,21 @@
 """
 Authentication & Authorization Module for AI GrowthPilot.
 
-Provides session-based HttpOnly cookies, CSRF protection, constant-time
-API key comparisons, loopback client resolution, and fail-closed remote access.
+Provides session-based HttpOnly cookies, server-side session tracking & revocation,
+CSRF protection, constant-time API key comparisons, loopback client resolution, and fail-closed remote access.
 """
 import time
+import datetime
 import hmac
 import hashlib
 import secrets
-from typing import Optional, Set
-from fastapi import Request, HTTPException, Security, status
+from typing import Optional, Set, Dict, Any, Tuple
+from sqlalchemy.orm import Session
+from fastapi import Request, HTTPException, Security, status, Depends
 from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 from app.config import settings
+from app.database import get_db
+from app.models.models import UserSession
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -46,8 +50,52 @@ def create_session_token(role: str = "admin", expiry_seconds: Optional[int] = No
     sig = hmac.new(settings.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}:{sig}"
 
-def validate_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Validates signature and expiration of a session token using constant-time comparison."""
+def create_server_session(
+    db: Session,
+    role: str = "admin",
+    expiry_seconds: Optional[int] = None,
+    client_ip: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Tuple[str, str]:
+    """
+    Creates a server-side tracked session in the database and returns (signed_token, session_id).
+    """
+    session_id = secrets.token_hex(32)
+    duration = expiry_seconds if expiry_seconds is not None else settings.SESSION_MAX_AGE_SECONDS
+    now = int(time.time())
+    expiry_epoch = now + duration
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=duration)
+
+    session_record = UserSession(
+        session_id=session_id,
+        role=role,
+        expires_at=expires_at,
+        is_revoked=False,
+        client_ip=client_ip,
+        user_agent=user_agent
+    )
+    db.add(session_record)
+    db.commit()
+
+    payload = f"{role}:{session_id}:{expiry_epoch}"
+    sig = hmac.new(settings.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}", session_id
+
+def revoke_session(db: Session, session_id: str) -> bool:
+    """Revokes an active session record server-side."""
+    record = db.query(UserSession).filter(UserSession.session_id == session_id).first()
+    if record:
+        record.is_revoked = True
+        record.revoked_at = datetime.datetime.utcnow()
+        db.commit()
+        return True
+    return False
+
+def validate_session_token(token: Optional[str], db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+    """
+    Validates signature, expiration, and server-side revocation status of a session token.
+    Uses constant-time comparison for HMAC signature check.
+    """
     if not token or not isinstance(token, str):
         return None
     parts = token.split(":")
@@ -70,6 +118,20 @@ def validate_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
             return None
     except ValueError:
         return None
+
+    # Server-side session verification if database session provided
+    if db is not None:
+        record = db.query(UserSession).filter(UserSession.session_id == session_id).first()
+        if record is not None:
+            if record.is_revoked:
+                return None
+            if record.expires_at <= datetime.datetime.utcnow():
+                return None
+            role = record.role
+        elif settings.ENVIRONMENT.lower() == "production":
+            # In production, every active session must have a corresponding database record
+            return None
+
     return {"session_id": session_id, "role": role, "expiry": expiry}
 
 def create_csrf_token() -> str:
@@ -103,14 +165,15 @@ def validate_csrf_token(token: Optional[str]) -> bool:
 def require_authenticated_user(
     request: Request,
     header_key: Optional[str] = Security(api_key_header),
-    bearer_creds: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    bearer_creds: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    db: Session = Depends(get_db)
 ) -> bool:
     """
     Unified security dependency protecting authenticated endpoints.
     
     Authentication mechanisms:
     1. Header authentication: X-API-Key or Bearer token matched via constant-time comparison.
-    2. Server-managed session: Valid HttpOnly session cookie ('growthpilot_session').
+    2. Server-managed session: Valid HttpOnly session cookie ('growthpilot_session') with server-side revocation check.
        State-changing requests authenticated via cookie MUST provide valid X-CSRF-Token.
     3. Local-only mode: When ADMIN_API_KEY is unset, requests from loopback clients
        (127.0.0.1, localhost, testclient) are permitted for local demonstration.
@@ -137,10 +200,11 @@ def require_authenticated_user(
                 headers={"WWW-Authenticate": "Bearer or X-API-Key"}
             )
 
-    # 2. Check Session Cookie
+    # 2. Check Session Cookie (with server-side revocation and CSRF validation)
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
     if session_cookie:
-        if validate_session_token(session_cookie):
+        session_info = validate_session_token(session_cookie, db=db)
+        if session_info:
             # Enforce CSRF protection for state-changing HTTP methods
             if request.method in STATE_CHANGING_METHODS:
                 csrf_token = request.headers.get("X-CSRF-Token")
@@ -153,7 +217,7 @@ def require_authenticated_user(
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session expired or invalid. Please log in again."
+                detail="Session expired or revoked. Please log in again."
             )
 
     # 3. Local Loopback Fallback (Only valid when ADMIN_API_KEY is not set)
@@ -180,14 +244,15 @@ def require_authenticated_user(
 def require_admin_user(
     request: Request,
     header_key: Optional[str] = Security(api_key_header),
-    bearer_creds: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    bearer_creds: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    db: Session = Depends(get_db)
 ) -> bool:
     """Dependency for administrative / destructive actions."""
-    require_authenticated_user(request, header_key, bearer_creds)
+    require_authenticated_user(request, header_key, bearer_creds, db=db)
     # If authenticated via session cookie, verify role == 'admin'
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
     if session_cookie:
-        session_info = validate_session_token(session_cookie)
+        session_info = validate_session_token(session_cookie, db=db)
         if session_info and session_info.get("role") != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -154,3 +154,128 @@ def test_admin_role_authorization_boundary(client, auth_client, admin_client):
     # Admin session can reset demo data
     res_admin = admin_client.post("/api/settings/reset-demo")
     assert res_admin.status_code == 200
+
+
+def test_production_session_secret_enforcement():
+    from app.config import validate_production_session_secret, DEV_DEFAULT_SESSION_SECRET
+
+    # 1. Production with empty secret -> raises ValueError
+    with pytest.raises(ValueError, match="SESSION_SECRET is required"):
+        validate_production_session_secret("", "production")
+
+    with pytest.raises(ValueError, match="SESSION_SECRET is required"):
+        validate_production_session_secret("   ", "production")
+
+    # 2. Production with dev default secret -> raises ValueError
+    with pytest.raises(ValueError, match="Default development SESSION_SECRET cannot be used"):
+        validate_production_session_secret(DEV_DEFAULT_SESSION_SECRET, "production")
+
+    # 3. Production with secret < 32 characters -> raises ValueError
+    with pytest.raises(ValueError, match="too short"):
+        validate_production_session_secret("short-secret-key-123", "production")
+
+    # 4. Production with valid secret (>= 32 chars and not default) -> passes
+    strong_secret = "a" * 32
+    validate_production_session_secret(strong_secret, "production")  # Should not raise
+
+    # 5. Development mode with default secret -> passes
+    validate_production_session_secret(DEV_DEFAULT_SESSION_SECRET, "development")  # Should not raise
+
+
+def test_server_side_session_creation_and_revocation():
+    from app.auth import create_server_session, revoke_session
+    from app.models.models import UserSession
+    from tests.conftest import TestingSessionLocal
+
+    db = TestingSessionLocal()
+    try:
+        # Create server session
+        token, session_id = create_server_session(db, role="admin", client_ip="127.0.0.1")
+        assert token is not None
+        assert session_id is not None
+
+        # Verify DB record exists and is active
+        record = db.query(UserSession).filter(UserSession.session_id == session_id).first()
+        assert record is not None
+        assert record.is_revoked is False
+        assert record.role == "admin"
+
+        # Validate token against DB
+        payload = validate_session_token(token, db=db)
+        assert payload is not None
+        assert payload["session_id"] == session_id
+        assert payload["role"] == "admin"
+
+        # Revoke session
+        success = revoke_session(db, session_id)
+        assert success is True
+
+        # Verify DB record updated
+        db.refresh(record)
+        assert record.is_revoked is True
+        assert record.revoked_at is not None
+
+        # Replayed token must now be rejected
+        revoked_payload = validate_session_token(token, db=db)
+        assert revoked_payload is None
+    finally:
+        db.close()
+
+
+def test_logout_revokes_server_session_and_rejects_subsequent_request(client, monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "TestPassword2026!")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "test_admin_key")
+
+    # 1. Login to get server-tracked session
+    login_res = client.post("/api/auth/login", json={"password": "TestPassword2026!"})
+    assert login_res.status_code == 200
+    session_token = login_res.cookies[SESSION_COOKIE_NAME]
+    csrf_token = login_res.cookies[CSRF_COOKIE_NAME]
+
+    # Verify access works before logout
+    headers = {"X-CSRF-Token": csrf_token}
+    res_before = client.get("/api/leads", cookies={SESSION_COOKIE_NAME: session_token}, headers=headers)
+    assert res_before.status_code == 200
+
+    # 2. Logout
+    logout_res = client.post(
+        "/api/auth/logout",
+        cookies={SESSION_COOKIE_NAME: session_token, CSRF_COOKIE_NAME: csrf_token},
+        headers=headers
+    )
+    assert logout_res.status_code == 200
+
+    # 3. Replay attack: try accessing protected route with the old session token
+    res_after = client.get("/api/leads", cookies={SESSION_COOKIE_NAME: session_token}, headers=headers)
+    assert res_after.status_code == 401
+    assert "Session expired or revoked" in res_after.json()["detail"]
+
+
+def test_server_side_session_expiration_rejection():
+    from app.auth import create_server_session
+    from tests.conftest import TestingSessionLocal
+
+    db = TestingSessionLocal()
+    try:
+        # Create an expired session in DB
+        token, session_id = create_server_session(db, role="admin", expiry_seconds=-10)
+        payload = validate_session_token(token, db=db)
+        assert payload is None
+    finally:
+        db.close()
+
+
+def test_production_mode_requires_database_session_record(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    from tests.conftest import TestingSessionLocal
+
+    db = TestingSessionLocal()
+    try:
+        # Create token without server session record
+        stateless_token = create_session_token(role="admin")
+        # In production, stateless token without DB record must be rejected
+        payload = validate_session_token(stateless_token, db=db)
+        assert payload is None
+    finally:
+        db.close()
+

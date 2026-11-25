@@ -5,7 +5,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-52%20Passed-success.svg)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-60%20Passed-success.svg)](https://pytest.org)
 [![Coverage](https://img.shields.io/badge/Coverage-82%25-brightgreen.svg)](https://pytest.org)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
@@ -238,7 +238,7 @@ AI GrowthPilot explicitly separates three operational generation states:
 
 ---
 
-## 7. Automated Test Suite (52 Tests Passing — 82% Code Coverage)
+## 7. Automated Test Suite (60 Tests Passing — 82% Code Coverage)
 
 Run the automated backend test suite with coverage:
 ```powershell
@@ -246,17 +246,17 @@ cd backend
 .\venv\Scripts\pytest -v --cov=app --cov-report=term-missing
 ```
 
-**Results (52/52 Passed, 82% Coverage):**
-- **Authentication & CSRF (`tests/test_auth.py` — 11 Tests):**
-  - HMAC-SHA256 session tokens, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges.
+**Results (60/60 Passed, 82% Coverage):**
+- **Authentication & CSRF (`tests/test_auth.py` — 16 Tests):**
+  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), and replayed revoked session rejection (401).
 - **Analytics & Data Ingestion (`tests/test_analytics.py` — 6 Tests):**
   - Empty baseline resilience, global spend/revenue aggregation, channel-only metric aggregation, campaign deletion metric preservation, strict CSV column/date/value/duplicate validation.
 - **Lead Qualification Rubric (`tests/test_scoring.py` — 6 Tests):**
   - Word boundary token matching, geography normalization, ICP rubric accuracy (30/25/20/15/10), missing field fallbacks, unrelated industry penalty (6/30), exact factor sum equality.
 - **AI Schema Validation & Privacy (`tests/test_gemini.py` — 7 Tests):**
   - Error classification, demo fallback decoupling, structured JSON parsing, malformed output handling, strict Pydantic AI schema validation, prompt secret sanitization, 30-day data retention cleanup.
-- **Security Defense-in-Depth (`tests/test_security.py` — 5 Tests):**
-  - Secret redaction, structure sanitization, 5MB chunked upload rejection, 5,000 row limits, admin key authentication.
+- **Security Defense-in-Depth & Retention Worker (`tests/test_security.py` — 8 Tests):**
+  - Secret redaction, structure sanitization, 5MB chunked upload rejection, 5,000 row limits, admin key authentication, periodic retention worker data cleanup, database error resilience with graceful rollback, and async lifecycle start/stop management.
 - **API Core Integration (`tests/test_api.py` — 17 Tests):**
   - Full endpoint lifecycle verification across Business Profile, Strategy, Campaigns, Content, Leads, and Analytics.
 
@@ -279,6 +279,7 @@ All technical assessment deliverables and reports are located in the [`docs/`](d
 | [`docs/PHASE_4_1_SECURITY_REVIEW.md`](docs/PHASE_4_1_SECURITY_REVIEW.md) | Phase 4.1 security architecture review: HMAC sessions, CSRF, RBAC, strict schemas, and telemetry sanitization. |
 | [`docs/PHASE_4_1_TEST_REPORT.md`](docs/PHASE_4_1_TEST_REPORT.md) | Comprehensive automated test report: 52 passing backend tests, 82% code coverage, and frontend verification. |
 | [`docs/PHASE_4_1_DEPLOYMENT_VERIFICATION.md`](docs/PHASE_4_1_DEPLOYMENT_VERIFICATION.md) | Single-container multi-stage Docker deployment, environment configuration, and verification. |
+| [`docs/PHASE_4_2_CLOSURE_REPORT.md`](docs/PHASE_4_2_CLOSURE_REPORT.md) | Phase 4.2 CI, Security & Production Closure: Node 24 CI, Docker verification, server session revocation, production secret enforcement, and retention worker. |
 | [`docs/PHASE_2_AUDIT_REPORT.md`](docs/PHASE_2_AUDIT_REPORT.md) | Phase 2 security and code quality remediation audit. |
 | [`docs/TESTING.md`](docs/TESTING.md) | Testing strategy, test suites, and validation methodology. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production cloud deployment guide. |

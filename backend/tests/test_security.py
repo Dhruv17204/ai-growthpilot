@@ -64,3 +64,76 @@ def test_admin_protection_when_admin_key_set(client, monkeypatch):
         headers={"X-API-Key": "super_secret_admin_token"}
     )
     assert res_auth.status_code == 200
+
+
+def test_retention_worker_cleans_old_prompt_executions():
+    import datetime
+    from app.models.models import PromptExecution
+    from app.services.retention_worker import PeriodicRetentionWorker
+    from tests.conftest import TestingSessionLocal
+
+    db = TestingSessionLocal()
+    try:
+        now = datetime.datetime.utcnow()
+        # Old record (35 days old)
+        old_exec = PromptExecution(
+            feature_name="Strategy",
+            prompt_version="v3.0",
+            prompt_rendered="Old prompt",
+            model_used="gemini-2.5-flash",
+            execution_status="success",
+            created_at=now - datetime.timedelta(days=35)
+        )
+        # Recent record (5 days old)
+        recent_exec = PromptExecution(
+            feature_name="Strategy",
+            prompt_version="v3.0",
+            prompt_rendered="Recent prompt",
+            model_used="gemini-2.5-flash",
+            execution_status="success",
+            created_at=now - datetime.timedelta(days=5)
+        )
+        db.add_all([old_exec, recent_exec])
+        db.commit()
+        old_id = old_exec.id
+        recent_id = recent_exec.id
+    finally:
+        db.close()
+
+    worker = PeriodicRetentionWorker(retention_days=30, session_factory=TestingSessionLocal)
+    deleted = worker.run_cleanup_once()
+    assert deleted >= 1
+
+    db2 = TestingSessionLocal()
+    try:
+        assert db2.query(PromptExecution).filter(PromptExecution.id == old_id).first() is None
+        assert db2.query(PromptExecution).filter(PromptExecution.id == recent_id).first() is not None
+    finally:
+        db2.close()
+
+
+def test_retention_worker_handles_database_error_gracefully(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.services.retention_worker import PeriodicRetentionWorker
+
+    mock_session_factory = MagicMock(side_effect=Exception("Database connection timeout"))
+    worker = PeriodicRetentionWorker(session_factory=mock_session_factory)
+    # Must not raise an exception; returns 0
+    deleted = worker.run_cleanup_once()
+    assert deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_retention_worker_lifecycle():
+    from app.services.retention_worker import PeriodicRetentionWorker
+    from tests.conftest import TestingSessionLocal
+
+    worker = PeriodicRetentionWorker(interval_seconds=3600, session_factory=TestingSessionLocal)
+    worker.start()
+    assert worker._task is not None
+    assert worker._is_running is True
+
+    await worker.stop()
+    assert worker._is_running is False
+    assert worker._task.done()
+

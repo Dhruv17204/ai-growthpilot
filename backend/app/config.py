@@ -14,7 +14,31 @@ For production multi-tenant deployments:
 """
 import os
 from typing import List
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+DEV_DEFAULT_SESSION_SECRET = "growthpilot-insecure-dev-session-key-change-in-prod"
+MIN_SESSION_SECRET_LENGTH = 32
+
+def validate_production_session_secret(secret: str, environment: str):
+    """Enforces strong session secret in production environments."""
+    env = (environment or "").strip().lower()
+    if env == "production":
+        sec = (secret or "").strip()
+        if not sec:
+            raise ValueError(
+                "Production configuration error: SESSION_SECRET is required and cannot be empty."
+            )
+        if sec == DEV_DEFAULT_SESSION_SECRET:
+            raise ValueError(
+                "Production configuration error: Default development SESSION_SECRET cannot be used in production. "
+                "Configure a secure, random SESSION_SECRET (at least 32 characters) via environment variables."
+            )
+        if len(sec) < MIN_SESSION_SECRET_LENGTH:
+            raise ValueError(
+                f"Production configuration error: SESSION_SECRET is too short ({len(sec)} characters). "
+                f"Production session secrets must be at least {MIN_SESSION_SECRET_LENGTH} characters long."
+            )
 
 # Absolute path anchor for default SQLite database
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,6 +66,11 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_list(self) -> List[str]:
         return [p.strip() for p in self.TRUSTED_PROXIES.split(",") if p.strip()]
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        validate_production_session_secret(self.SESSION_SECRET, self.ENVIRONMENT)
+        return self
 
     class Config:
         env_file = ".env"

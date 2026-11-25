@@ -23,7 +23,7 @@ The production `Dockerfile` employs a multi-stage architecture to minimize image
 
 ```dockerfile
 # Stage 1: Build Frontend Assets
-FROM node:20-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
