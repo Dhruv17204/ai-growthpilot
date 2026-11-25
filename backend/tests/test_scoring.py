@@ -65,3 +65,82 @@ def test_heuristic_lead_score_bounds_and_accuracy():
     assert res_low["score_explanation"]["industry_alignment"]["score"] != 30
     # Verify location didn't get 20/20 for 'us'
     assert res_low["score_explanation"]["geographic_match"]["score"] != 20
+
+def test_heuristic_missing_fields_graceful_handling():
+    profile = BusinessProfile(
+        company_name="NovaTech",
+        industry="Software",
+        services=["Cloud"],
+        target_audience=["SaaS"],
+        target_geography=["United States"]
+    )
+
+    lead_missing_all = {
+        "name": "Anonymous",
+        "job_title": "",
+        "company": "",
+        "industry": "",
+        "company_size": "",
+        "location": "",
+        "lead_source": ""
+    }
+    res = heuristic_lead_score(lead_missing_all, profile)
+    exp = res["score_explanation"]
+    assert exp["industry_alignment"]["score"] == 5
+    assert exp["decision_maker_authority"]["score"] == 5
+    assert exp["geographic_match"]["score"] == 5
+    assert exp["company_size_fit"]["score"] == 5
+    assert exp["source_intent"]["score"] == 4
+    assert res["score"] == 24
+    assert res["qualification_category"] == "Low Priority"
+
+def test_heuristic_unrelated_industry_penalized():
+    profile = BusinessProfile(
+        company_name="NovaTech",
+        industry="Software",
+        services=["Cloud"],
+        target_audience=["SaaS"],
+        target_geography=["United States"]
+    )
+
+    unrelated_lead = {
+        "name": "Hank Schrader",
+        "job_title": "Manager",
+        "company": "Mineral Extraction Inc",
+        "industry": "Coal Mining & Mineral Extraction",
+        "company_size": "51-200",
+        "location": "Albuquerque, United States",
+        "lead_source": "Cold Outreach"
+    }
+    res = heuristic_lead_score(unrelated_lead, profile)
+    # Heavy penalty for completely unrelated industry: 6/30
+    assert res["score_explanation"]["industry_alignment"]["score"] == 6
+
+def test_heuristic_exact_factor_sum_equals_total_score():
+    profile = BusinessProfile(
+        company_name="NovaTech",
+        industry="Software",
+        services=["Cloud"],
+        target_audience=["SaaS"],
+        target_geography=["United States"]
+    )
+
+    sample_lead = {
+        "name": "Jane Miller",
+        "job_title": "VP Marketing",
+        "company": "Growth Hub",
+        "industry": "Marketing Technology",
+        "company_size": "201-500",
+        "location": "New York, USA",
+        "lead_source": "Organic Search"
+    }
+    res = heuristic_lead_score(sample_lead, profile)
+    exp = res["score_explanation"]
+    total = sum(
+        exp[key]["score"] for key in [
+            "industry_alignment", "decision_maker_authority",
+            "geographic_match", "company_size_fit", "source_intent"
+        ]
+    )
+    assert total == res["score"]
+

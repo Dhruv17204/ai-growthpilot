@@ -218,10 +218,10 @@ class GeminiClient:
                 try:
                     validated = response_schema.model_validate(parsed)
                     parsed = validated.model_dump()
-                except ValidationError as ve:
-                    logger.warning(f"Gemini output schema validation warning: {ve}")
-                    # Return parsed with warning rather than discarding data if structure matches
-                    pass
+                except (ValidationError, ValueError) as ve:
+                    latency = int((time.time() - start_time) * 1000)
+                    logger.error(f"Gemini output schema validation failed: {ve}")
+                    return {}, latency, "error", f"Gemini response failed strict schema validation: {str(ve)}"
 
             return parsed, latency, "success", None
 

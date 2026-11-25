@@ -2,10 +2,11 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import PromptTemplate, PromptExecution, AIActivity
 from app.schemas.schemas import PromptTemplateResponse, PromptExecutionResponse, AIActivityResponse
 
-router = APIRouter(tags=["Prompt Lab & Activity"])
+router = APIRouter(tags=["Prompt Lab & Activity"], dependencies=[Depends(require_authenticated_user)])
 
 @router.get("/prompts", response_model=List[PromptTemplateResponse])
 def get_prompt_templates(db: Session = Depends(get_db)):

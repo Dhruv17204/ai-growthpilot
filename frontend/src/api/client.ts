@@ -16,19 +16,38 @@ import {
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || '/api';
 
+function getCsrfTokenFromCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)growthpilot_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function fetchJson<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   // Normalize leading slash
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${API_BASE}${cleanEndpoint}`;
 
+  const method = (options.method || 'GET').toUpperCase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
 
+  // Attach CSRF token on state-changing requests if present in cookie
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    const csrfToken = getCsrfTokenFromCookie();
+    if (csrfToken && !headers['X-CSRF-Token']) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+  }
+
   let response: Response;
   try {
-    response = await fetch(url, { ...options, headers });
+    response = await fetch(url, {
+      credentials: 'same-origin',
+      ...options,
+      headers,
+    });
   } catch (err: any) {
     throw new Error(`Network connection error: ${err?.message || 'Unable to reach backend service.'}`);
   }
@@ -59,6 +78,19 @@ export async function fetchJson<T>(endpoint: string, options: RequestInit = {}):
 
 // Single authoritative API client
 export const api = {
+  // Authentication & Session
+  login: (password: string) =>
+    fetchJson<{ message: string; authenticated: boolean }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  logout: () =>
+    fetchJson<{ message: string }>('/auth/logout', { method: 'POST' }),
+  getAuthStatus: () =>
+    fetchJson<{ authenticated: boolean; role: string; ip: string; message: string }>('/auth/status'),
+  getCsrfToken: () =>
+    fetchJson<{ csrf_token: string }>('/auth/csrf'),
+
   // Health & Config
   getHealth: () => fetchJson<HealthStatus>('/health'),
   healthCheck: () => fetchJson<HealthStatus>('/health'),
@@ -212,8 +244,15 @@ export const api = {
   importLeadsCSV: async (file: File): Promise<CSVImportResult> => {
     const formData = new FormData();
     formData.append('file', file);
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: Record<string, string> = {};
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
     const res = await fetch(`${API_BASE}/leads/import`, {
       method: 'POST',
+      credentials: 'same-origin',
+      headers,
       body: formData,
     });
     if (!res.ok) {
@@ -251,8 +290,15 @@ export const api = {
   importCampaignMetricsCSV: async (file: File): Promise<{ message: string; rows_imported: number }> => {
     const formData = new FormData();
     formData.append('file', file);
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: Record<string, string> = {};
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
     const res = await fetch(`${API_BASE}/analytics/campaign-metrics/import`, {
       method: 'POST',
+      credentials: 'same-origin',
+      headers,
       body: formData,
     });
     if (!res.ok) {

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.models import Campaign, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import CampaignAIResponse
 
 logger = logging.getLogger("growthpilot.campaigns")
 
@@ -184,7 +185,8 @@ async def generate_campaign(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=CAMPAIGN_SYSTEM_PROMPT,
-            temperature=0.4
+            temperature=0.4,
+            response_schema=CampaignAIResponse
         )
 
         log_prompt_execution(

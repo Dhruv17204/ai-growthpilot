@@ -6,13 +6,28 @@ services:
     container_name: ai-growthpilot
     ports:
       - "8000:8000"
+    volumes:
+      - growthpilot-data:/app/backend/data
     environment:
       - ENVIRONMENT=production
       - HOST=0.0.0.0
       - PORT=8000
       - CORS_ORIGINS=http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000
+      - DATABASE_URL=sqlite:////app/backend/data/growthpilot.db
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - DEMO_MODE=${DEMO_MODE:-false}
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-AdminSecure2026!}
+      - SESSION_SECRET=${SESSION_SECRET:-growthpilot-super-secure-production-secret-replace-me}
+      - TRUSTED_PROXIES=127.0.0.1,::1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+
+volumes:
+  growthpilot-data:

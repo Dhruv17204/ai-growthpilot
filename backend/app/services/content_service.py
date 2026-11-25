@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.models import ContentItem, BusinessProfile, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import ContentPlanAIResponse
 
 logger = logging.getLogger("growthpilot.content")
 
@@ -214,7 +215,8 @@ async def generate_content_plan(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=CONTENT_SYSTEM_PROMPT,
-            temperature=0.4
+            temperature=0.4,
+            response_schema=ContentPlanAIResponse
         )
 
         log_prompt_execution(

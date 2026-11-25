@@ -2,13 +2,14 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import ContentItem, BusinessProfile
 from app.schemas.schemas import (
     ContentItemResponse, ContentItemCreate, ContentItemUpdate, GenerateContentPlanRequest
 )
 from app.services.content_service import generate_content_plan
 
-router = APIRouter(tags=["Content Calendar"])
+router = APIRouter(tags=["Content Calendar"], dependencies=[Depends(require_authenticated_user)])
 
 @router.post("/ai/content-plan")
 async def create_content_plan(payload: GenerateContentPlanRequest, db: Session = Depends(get_db)):

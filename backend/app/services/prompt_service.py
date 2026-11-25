@@ -165,8 +165,8 @@ def redact_sensitive_text(text: str) -> str:
     """Redacts API keys, emails, and phone numbers from text logs."""
     if not text:
         return text
-    # 1. API Keys / Secrets first (matches Google AI keys: AIzaSy followed by 20+ chars)
-    text = re.sub(r'AIzaSy[A-Za-z0-9_-]{20,}', '[REDACTED_SECRET]', text)
+    # 1. API Keys / Secrets first (matches Google AI keys: AIzaSy followed by 16+ chars)
+    text = re.sub(r'AIzaSy[A-Za-z0-9_-]{16,}', '[REDACTED_SECRET]', text)
     # 2. Email addresses
     text = EMAIL_PATTERN.sub("[REDACTED_EMAIL]", text)
     # 3. Phone numbers (with strict boundary lookarounds so internal digits aren't mangled)
@@ -199,19 +199,21 @@ def log_prompt_execution(
     is_example: bool = False
 ) -> PromptExecution:
     sanitized_prompt = redact_sensitive_text(prompt_rendered)
+    sanitized_system = redact_sensitive_text(system_instruction) if system_instruction else ""
     sanitized_inputs = redact_structure(user_inputs)
     sanitized_output = redact_structure(generated_output)
+    sanitized_error = redact_sensitive_text(error_message) if error_message else None
 
     execution = PromptExecution(
         feature_name=feature_name,
         prompt_template_id=prompt_template_id,
         prompt_version=prompt_version,
-        system_instruction_used=system_instruction,
+        system_instruction_used=sanitized_system,
         prompt_rendered=sanitized_prompt,
         user_inputs=sanitized_inputs,
         model_used=model_used,
         execution_status=execution_status,
-        error_message=error_message,
+        error_message=sanitized_error,
         latency_ms=latency_ms,
         generated_output=sanitized_output,
         is_example=is_example

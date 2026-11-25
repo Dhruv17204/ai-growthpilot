@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.models import Lead, BusinessProfile, AIActivity, LeadNote
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import LeadScoringAIResponse
 
 logger = logging.getLogger("growthpilot.leads")
 
@@ -128,18 +129,26 @@ def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile
         "proptech", "legal", "edtech", "cleantech", "finance", "telecom"
     ]
 
-    if matches_token(industry, prime_industries):
+    unrelated_industries = [
+        "refrigeration", "mining", "plumbing", "agriculture", "construction",
+        "heavy equipment", "waste management", "automotive repair", "quarrying"
+    ]
+
+    if not industry or industry.lower() in ("unspecified", "unknown", "n/a", "none"):
+        ind_score = 5
+        ind_reason = "Unspecified Lead Industry (5/30): Missing data; baseline applied."
+    elif matches_token(industry, prime_industries):
         ind_score = 30
         ind_reason = f"Prime ICP Alignment (30/30): '{lead.get('industry')}' is a core buyer for automation & development services."
     elif matches_token(industry, secondary_industries):
-        ind_score = 22
-        ind_reason = f"Good Industry Fit (22/30): '{lead.get('industry')}' frequently commissions workflow automation & custom software."
-    elif industry:
-        ind_score = 15
-        ind_reason = f"Moderate Industry Fit (15/30): '{lead.get('industry')}' has general tech modernisation potential."
+        ind_score = 20
+        ind_reason = f"Good Industry Fit (20/30): '{lead.get('industry')}' frequently commissions workflow automation & custom software."
+    elif matches_token(industry, unrelated_industries):
+        ind_score = 6
+        ind_reason = f"Low ICP Fit (6/30): '{lead.get('industry')}' has minimal demand for custom software/AI services."
     else:
-        ind_score = 10
-        ind_reason = "Unspecified Industry (10/30): Baseline assumption applied."
+        ind_score = 12
+        ind_reason = f"Moderate Industry Fit (12/30): '{lead.get('industry')}' has general tech modernisation potential."
 
     # 2. Decision Maker Authority (Max 25 pts - 25%)
     high_auth_keywords = [
@@ -150,42 +159,54 @@ def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile
         "manager", "lead", "architect", "strategist", "supervisor", "consultant", "senior engineer"
     ]
 
-    if matches_token(title, high_auth_keywords):
+    if not title or title.lower() in ("unspecified", "unknown", "n/a", "none"):
+        auth_score = 5
+        auth_reason = "Unspecified Role (5/25): Missing title data."
+    elif matches_token(title, high_auth_keywords):
         auth_score = 25
         auth_reason = f"Executive Decision Maker (25/25): '{lead.get('job_title')}' possesses fiscal and strategic approval authority."
     elif matches_token(title, med_auth_keywords):
-        auth_score = 17
-        auth_reason = f"Department Influencer (17/25): '{lead.get('job_title')}' can sponsor initiatives and initiate vendor evaluations."
-    elif title:
+        auth_score = 16
+        auth_reason = f"Department Influencer (16/25): '{lead.get('job_title')}' can sponsor initiatives and initiate vendor evaluations."
+    else:
         auth_score = 10
         auth_reason = f"Individual Contributor (10/25): '{lead.get('job_title')}' may require executive escalation."
-    else:
-        auth_score = 8
-        auth_reason = "Unspecified Role (8/25): Baseline assumption applied."
 
     # 3. Geographic Match (Max 20 pts - 20%)
     norm_loc = normalize_geo(loc)
-    target_geos = []
-    if profile and profile.target_geography:
-        target_geos = [normalize_geo(g) for g in profile.target_geography]
-    if not target_geos:
-        target_geos = ["australia", "united states", "india"]
-
-    if norm_loc in target_geos:
-        geo_score = 20
-        geo_reason = f"Primary Market (20/20): '{lead.get('location')}' matches seller primary operating region."
-    elif norm_loc in ["united states", "australia", "india", "united kingdom", "canada", "europe"]:
-        geo_score = 13
-        geo_reason = f"Secondary Market (13/20): '{lead.get('location')}' can be served via remote delivery."
-    elif loc and loc.lower() != "global" and loc.lower() != "unspecified":
-        geo_score = 12
-        geo_reason = f"International Market (12/20): '{lead.get('location')}' remote delivery feasible."
+    seller_has_geos = bool(profile and profile.target_geography and any(g.strip() for g in profile.target_geography))
+    
+    if seller_has_geos:
+        target_geos = [normalize_geo(g) for g in profile.target_geography if g.strip()]
+        if norm_loc in target_geos:
+            geo_score = 20
+            geo_reason = f"Primary Market (20/20): '{lead.get('location')}' matches seller's configured target geography."
+        elif norm_loc in ["united states", "australia", "india", "united kingdom", "canada", "europe"]:
+            geo_score = 12
+            geo_reason = f"Secondary Market (12/20): '{lead.get('location')}' can be served via remote delivery."
+        elif loc and loc.lower() not in ("global", "unspecified", "unknown"):
+            geo_score = 8
+            geo_reason = f"International Region (8/20): '{lead.get('location')}' is outside seller target regions."
+        else:
+            geo_score = 5
+            geo_reason = "Unspecified Location (5/20): Missing location data."
     else:
-        geo_score = 10
-        geo_reason = "Global/Unspecified (10/20): Remote baseline applied."
+        # Transparently disclose seller has NOT configured target geography
+        if norm_loc in ["united states", "australia", "india", "united kingdom", "canada", "europe"]:
+            geo_score = 10
+            geo_reason = f"Global Tech Region (10/20): '{lead.get('location')}' baseline (Seller target geography unconfigured)."
+        elif loc and loc.lower() not in ("global", "unspecified", "unknown"):
+            geo_score = 8
+            geo_reason = f"International Region (8/20): '{lead.get('location')}' (Seller target geography unconfigured)."
+        else:
+            geo_score = 5
+            geo_reason = "Unspecified Geography (5/20): Missing lead location and unconfigured seller target geography."
 
     # 4. Company Size Fit (Max 15 pts - 15%)
-    if any(s in size for s in ["51-200", "201-500", "50-100", "100-250"]):
+    if not size or size in ("unspecified", "unknown", "n/a", "none"):
+        size_score = 5
+        size_reason = "Unspecified Size (5/15): Missing company headcount data."
+    elif any(s in size for s in ["51-200", "201-500", "50-100", "100-250"]):
         size_score = 15
         size_reason = f"Sweet Spot ICP (15/15): '{lead.get('company_size')}' companies have dedicated budget and agility."
     elif any(s in size for s in ["11-50", "10-50"]):
@@ -195,17 +216,20 @@ def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile
         size_score = 10
         size_reason = f"Large Enterprise (10/15): '{lead.get('company_size')}' has high deal value but lengthy procurement cycles."
     elif any(s in size for s in ["1-10", "1-5", "micro", "self-employed"]):
-        size_score = 8
-        size_reason = f"Small Team (8/15): '{lead.get('company_size')}'; budget may be constrained."
-    else:
         size_score = 7
-        size_reason = "Unspecified Size (7/15): Default baseline applied."
+        size_reason = f"Small Team (7/15): '{lead.get('company_size')}'; budget may be constrained."
+    else:
+        size_score = 6
+        size_reason = f"Specified Size (6/15): '{lead.get('company_size')}' outside primary target tiers."
 
     # 5. Source Intent (Max 10 pts - 10%)
     high_intent_sources = ["website", "demo request", "inbound", "referral", "contact form", "pricing page"]
     med_intent_sources = ["linkedin", "event", "webinar", "organic", "content download"]
 
-    if matches_token(source, high_intent_sources):
+    if not source or source.lower() in ("unspecified", "unknown", "n/a", "none"):
+        src_score = 4
+        src_reason = "Unspecified Lead Source (4/10): Source intent unknown."
+    elif matches_token(source, high_intent_sources):
         src_score = 10
         src_reason = f"High Commercial Intent (10/10): '{lead.get('lead_source')}' indicates proactive solution seeking."
     elif matches_token(source, med_intent_sources):
@@ -308,7 +332,8 @@ async def score_single_lead(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=LEAD_SCORER_SYSTEM_PROMPT,
-            temperature=0.2
+            temperature=0.2,
+            response_schema=LeadScoringAIResponse
         )
 
         log_prompt_execution(
@@ -329,7 +354,7 @@ async def score_single_lead(
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "error": error_msg or "Gemini API lead scoring failed.",
+                    "error": error_msg or "Gemini API lead scoring failed strict schema validation.",
                     "offer_demo_mode": True,
                     "message": f"Gemini lead scoring failed: {error_msg or 'Incomplete score schema'}. You can retry or use rule-based scoring."
                 }

@@ -5,13 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import Lead, BusinessProfile, LeadNote
 from app.schemas.schemas import (
     LeadResponse, LeadCreate, LeadUpdate, LeadNoteCreate, LeadNoteResponse, CSVImportResult
 )
 from app.services.lead_scoring_service import process_leads_csv, score_single_lead, heuristic_lead_score
 
-router = APIRouter(prefix="/leads", tags=["Lead Intelligence"])
+router = APIRouter(prefix="/leads", tags=["Lead Intelligence"], dependencies=[Depends(require_authenticated_user)])
 
 MAX_CSV_BYTES = 5 * 1024 * 1024 # 5 MB upload limit
 

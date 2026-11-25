@@ -5,7 +5,8 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-32%20Passed-success.svg)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-52%20Passed-success.svg)](https://pytest.org)
+[![Coverage](https://img.shields.io/badge/Coverage-82%25-brightgreen.svg)](https://pytest.org)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
 **AI GrowthPilot** is a full-stack, enterprise-grade business growth and marketing automation SaaS platform engineered specifically for small IT companies, software agencies, AI consultancies, and digital service providers.
@@ -237,32 +238,27 @@ AI GrowthPilot explicitly separates three operational generation states:
 
 ---
 
-## 7. Automated Test Suite (17 Tests Passing)
+## 7. Automated Test Suite (52 Tests Passing — 82% Code Coverage)
 
-Run the automated backend test suite:
+Run the automated backend test suite with coverage:
 ```powershell
 cd backend
-.\venv\Scripts\pytest -v
+.\venv\Scripts\pytest -v --cov=app --cov-report=term-missing
 ```
 
-**Results (17/17 Passed in ~1.5s):**
-- `test_health_check` &rarr; **PASSED**
-- `test_business_profile_get` &rarr; **PASSED**
-- `test_business_profile_update` &rarr; **PASSED**
-- `test_generate_strategy` &rarr; **PASSED**
-- `test_campaign_lifecycle` &rarr; **PASSED**
-- `test_content_plan_generation` &rarr; **PASSED**
-- `test_leads_csv_import_and_duplicate_handling` &rarr; **PASSED**
-- `test_leads_search_and_filter` &rarr; **PASSED**
-- `test_analytics_overview` &rarr; **PASSED**
-- `test_prompt_lab_history` &rarr; **PASSED**
-- `test_csv_formula_injection_sanitization` &rarr; **PASSED** *(CWE-1236 Formula Injection Defense)*
-- `test_csv_file_size_limit_rejection` &rarr; **PASSED** *(5MB Upload Limit Enforcement)*
-- `test_csv_case_insensitive_duplicate_email` &rarr; **PASSED** *(Deduplication)*
-- `test_csv_invalid_email_handling` &rarr; **PASSED** *(RFC 5322 Email Validation)*
-- `test_lead_scoring_heuristic_rubric_weights` &rarr; **PASSED** *(Full 100-pt Rubric: 30/25/20/15/10)*
-- `test_ai_error_handling_when_gemini_fails` &rarr; **PASSED** *(HTTP 502 Bad Gateway Decoupling)*
-- `test_demo_reset_preserves_user_leads` &rarr; **PASSED** *(User Lead Isolation on Reset)*
+**Results (52/52 Passed, 82% Coverage):**
+- **Authentication & CSRF (`tests/test_auth.py` — 11 Tests):**
+  - HMAC-SHA256 session tokens, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges.
+- **Analytics & Data Ingestion (`tests/test_analytics.py` — 6 Tests):**
+  - Empty baseline resilience, global spend/revenue aggregation, channel-only metric aggregation, campaign deletion metric preservation, strict CSV column/date/value/duplicate validation.
+- **Lead Qualification Rubric (`tests/test_scoring.py` — 6 Tests):**
+  - Word boundary token matching, geography normalization, ICP rubric accuracy (30/25/20/15/10), missing field fallbacks, unrelated industry penalty (6/30), exact factor sum equality.
+- **AI Schema Validation & Privacy (`tests/test_gemini.py` — 7 Tests):**
+  - Error classification, demo fallback decoupling, structured JSON parsing, malformed output handling, strict Pydantic AI schema validation, prompt secret sanitization, 30-day data retention cleanup.
+- **Security Defense-in-Depth (`tests/test_security.py` — 5 Tests):**
+  - Secret redaction, structure sanitization, 5MB chunked upload rejection, 5,000 row limits, admin key authentication.
+- **API Core Integration (`tests/test_api.py` — 17 Tests):**
+  - Full endpoint lifecycle verification across Business Profile, Strategy, Campaigns, Content, Leads, and Analytics.
 
 ---
 
@@ -280,6 +276,9 @@ All technical assessment deliverables and reports are located in the [`docs/`](d
 | [`docs/FINAL_PRE_SUBMISSION_REPORT.md`](docs/FINAL_PRE_SUBMISSION_REPORT.md) | Complete pre-submission audit including Chrome CDP browser verification across 8 modules. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Comprehensive system architecture, data models, and API interaction diagrams. |
 | [`docs/FEATURES.md`](docs/FEATURES.md) | Detailed user feature guide and functional specifications. |
+| [`docs/PHASE_4_1_SECURITY_REVIEW.md`](docs/PHASE_4_1_SECURITY_REVIEW.md) | Phase 4.1 security architecture review: HMAC sessions, CSRF, RBAC, strict schemas, and telemetry sanitization. |
+| [`docs/PHASE_4_1_TEST_REPORT.md`](docs/PHASE_4_1_TEST_REPORT.md) | Comprehensive automated test report: 52 passing backend tests, 82% code coverage, and frontend verification. |
+| [`docs/PHASE_4_1_DEPLOYMENT_VERIFICATION.md`](docs/PHASE_4_1_DEPLOYMENT_VERIFICATION.md) | Single-container multi-stage Docker deployment, environment configuration, and verification. |
 | [`docs/PHASE_2_AUDIT_REPORT.md`](docs/PHASE_2_AUDIT_REPORT.md) | Phase 2 security and code quality remediation audit. |
 | [`docs/TESTING.md`](docs/TESTING.md) | Testing strategy, test suites, and validation methodology. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production cloud deployment guide. |

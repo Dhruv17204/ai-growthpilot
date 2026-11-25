@@ -30,10 +30,18 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     DEMO_MODE: bool = False
     ADMIN_API_KEY: str = ""
+    ADMIN_PASSWORD: str = ""
+    SESSION_SECRET: str = "growthpilot-insecure-dev-session-key-change-in-prod"
+    SESSION_MAX_AGE_SECONDS: int = 86400  # 24 hours
+    TRUSTED_PROXIES: str = ""
 
     @property
     def cors_origin_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def trusted_proxy_list(self) -> List[str]:
+        return [p.strip() for p in self.TRUSTED_PROXIES.split(",") if p.strip()]
 
     class Config:
         env_file = ".env"

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import BusinessProfile
 from app.schemas.schemas import BusinessProfileResponse, BusinessProfileCreate
 
-router = APIRouter(prefix="/business-profile", tags=["Business Profile"])
+router = APIRouter(prefix="/business-profile", tags=["Business Profile"], dependencies=[Depends(require_authenticated_user)])
 
 @router.get("", response_model=BusinessProfileResponse)
 def get_business_profile(db: Session = Depends(get_db)):

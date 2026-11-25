@@ -53,7 +53,36 @@ def override_get_db():
 
 app.dependency_overrides[get_db] = override_get_db
 
+from app.auth import (
+    create_session_token,
+    create_csrf_token,
+    SESSION_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+)
+
 @pytest.fixture
 def client():
     with TestClient(app) as c:
+        yield c
+
+@pytest.fixture
+def auth_client():
+    """Client with valid authenticated session cookie and matching CSRF header."""
+    with TestClient(app) as c:
+        token = create_session_token(role="user")
+        csrf = create_csrf_token()
+        c.cookies.set(SESSION_COOKIE_NAME, token)
+        c.cookies.set(CSRF_COOKIE_NAME, csrf)
+        c.headers.update({"X-CSRF-Token": csrf})
+        yield c
+
+@pytest.fixture
+def admin_client():
+    """Client with valid admin session cookie and matching CSRF header."""
+    with TestClient(app) as c:
+        token = create_session_token(role="admin")
+        csrf = create_csrf_token()
+        c.cookies.set(SESSION_COOKIE_NAME, token)
+        c.cookies.set(CSRF_COOKIE_NAME, csrf)
+        c.headers.update({"X-CSRF-Token": csrf})
         yield c

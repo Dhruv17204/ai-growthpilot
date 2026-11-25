@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import CampaignMetric
 from app.schemas.schemas import (
     AnalyticsOverviewResponse,
@@ -13,7 +14,7 @@ from app.schemas.schemas import (
 )
 from app.services.analytics_service import get_analytics_overview, import_campaign_metrics
 
-router = APIRouter(prefix="/analytics", tags=["Analytics"])
+router = APIRouter(prefix="/analytics", tags=["Analytics"], dependencies=[Depends(require_authenticated_user)])
 
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024 # 5 MB
 
