@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from app.config import settings
 from app.database import get_db
+from app.services.rate_limiter import login_rate_limiter
 from app.auth import (
     create_session_token,
     create_server_session,
@@ -40,6 +41,17 @@ class AuthStatusResponse(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    client_ip = get_client_ip(request)
+
+    # 1. Enforce brute-force rate limiting
+    is_allowed, retry_after = login_rate_limiter.check_allowed(client_ip)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Please try again in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
     expected_password = (
         settings.ADMIN_PASSWORD.strip() if settings.ADMIN_PASSWORD
         else (settings.ADMIN_API_KEY.strip() if settings.ADMIN_API_KEY else "")
@@ -47,6 +59,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
 
     if expected_password:
         if not secrets.compare_digest(payload.password.strip(), expected_password):
+            login_rate_limiter.record_failure(client_ip)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials. Incorrect password."
@@ -58,21 +71,22 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 detail="Login unavailable: ADMIN_PASSWORD or ADMIN_API_KEY must be configured in production."
             )
         # In local unconfigured mode, any password or empty password creates a local session
-        client_ip = get_client_ip(request)
         if client_ip not in LOCAL_HOSTS:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Remote login unavailable when ADMIN_API_KEY is not configured."
             )
 
-    client_ip = get_client_ip(request)
+    # Successful authentication resets failed attempts
+    login_rate_limiter.record_success(client_ip)
+
     session_token, session_id = create_server_session(
         db=db,
         role="admin",
         client_ip=client_ip,
         user_agent=request.headers.get("User-Agent")
     )
-    csrf_token = create_csrf_token()
+    csrf_token = create_csrf_token(session_id=session_id)
 
     is_prod = settings.ENVIRONMENT.lower() == "production"
 
@@ -123,10 +137,12 @@ def get_auth_status(request: Request, db: Session = Depends(get_db)):
     admin_key = bool(settings.ADMIN_API_KEY.strip()) if settings.ADMIN_API_KEY else False
 
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
-    has_valid_session = bool(validate_session_token(session_cookie, db=db)) if session_cookie else False
+    session_info = validate_session_token(session_cookie, db=db) if session_cookie else None
+    has_valid_session = bool(session_info)
+    session_id = session_info.get("session_id") if session_info else None
 
     authenticated = bool(has_valid_session or (not admin_key and is_local))
-    csrf_token = create_csrf_token()
+    csrf_token = create_csrf_token(session_id=session_id)
 
     return AuthStatusResponse(
         authenticated=authenticated,
@@ -137,5 +153,8 @@ def get_auth_status(request: Request, db: Session = Depends(get_db)):
     )
 
 @router.get("/csrf")
-def get_csrf():
-    return {"csrf_token": create_csrf_token()}
+def get_csrf(request: Request, db: Session = Depends(get_db)):
+    session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
+    session_info = validate_session_token(session_cookie, db=db) if session_cookie else None
+    session_id = session_info.get("session_id") if session_info else None
+    return {"csrf_token": create_csrf_token(session_id=session_id)}

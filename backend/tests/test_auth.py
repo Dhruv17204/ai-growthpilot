@@ -63,7 +63,8 @@ def test_logout_clears_cookies(auth_client):
 def test_csrf_protection_on_state_changing_requests(client):
     # Authenticated session token
     token = create_session_token(role="user")
-    csrf = create_csrf_token()
+    session_id = token.split(":")[1]
+    csrf = create_csrf_token(session_id=session_id)
 
     profile_payload = {
         "company_name": "TestCorp",
@@ -81,17 +82,56 @@ def test_csrf_protection_on_state_changing_requests(client):
     client.cookies.set(CSRF_COOKIE_NAME, csrf)
     res_no_csrf = client.post("/api/business-profile", json=profile_payload)
     assert res_no_csrf.status_code == 403
-    assert "CSRF" in res_no_csrf.json()["detail"]
+    assert "Missing CSRF token" in res_no_csrf.json()["detail"]
 
-    # 2. State-changing POST with wrong CSRF header -> 403 Forbidden
+    # 2. State-changing POST with wrong CSRF header -> 403 Forbidden (mismatch)
     res_wrong_csrf = client.post(
         "/api/business-profile",
         json=profile_payload,
         headers={"X-CSRF-Token": "invalid_csrf_token"}
     )
     assert res_wrong_csrf.status_code == 403
+    assert "Token mismatch" in res_wrong_csrf.json()["detail"]
 
-    # 3. State-changing POST with valid CSRF header -> 200 OK
+    # 3. State-changing POST with missing CSRF cookie -> 403 Forbidden
+    client.cookies.delete(CSRF_COOKIE_NAME)
+    res_no_cookie = client.post(
+        "/api/business-profile",
+        json=profile_payload,
+        headers={"X-CSRF-Token": csrf}
+    )
+    assert res_no_cookie.status_code == 403
+    assert "Missing CSRF token" in res_no_cookie.json()["detail"]
+
+    # 4. State-changing POST with token belonging to a different session -> 403 Forbidden
+    other_csrf = create_csrf_token(session_id="different_session_9999")
+    client.cookies.set(CSRF_COOKIE_NAME, other_csrf)
+    res_other_session = client.post(
+        "/api/business-profile",
+        json=profile_payload,
+        headers={"X-CSRF-Token": other_csrf}
+    )
+    assert res_other_session.status_code == 403
+    assert "session-mismatched" in res_other_session.json()["detail"]
+
+    # 5. State-changing POST with tampered signature -> 403 Forbidden
+    tampered_csrf = csrf[:-4] + "xxxx"
+    client.cookies.set(CSRF_COOKIE_NAME, tampered_csrf)
+    res_tampered = client.post(
+        "/api/business-profile",
+        json=profile_payload,
+        headers={"X-CSRF-Token": tampered_csrf}
+    )
+    assert res_tampered.status_code == 403
+    assert "Invalid, expired, or session-mismatched" in res_tampered.json()["detail"]
+
+    # 6. GET / HEAD requests do NOT require CSRF token
+    client.cookies.delete(CSRF_COOKIE_NAME)
+    res_get = client.get("/api/leads")
+    assert res_get.status_code == 200
+
+    # 7. State-changing POST with valid matching session-bound CSRF header & cookie -> 200 OK
+    client.cookies.set(CSRF_COOKIE_NAME, csrf)
     res_valid = client.post(
         "/api/business-profile",
         json=profile_payload,
@@ -318,5 +358,33 @@ def test_login_fails_in_production_when_admin_credentials_unconfigured(client, m
     res = client.post("/api/auth/login", json={"password": "any-password"})
     assert res.status_code == 403
     assert "must be configured in production" in res.json()["detail"]
+
+
+def test_login_rate_limiting_and_brute_force_lockout(client, monkeypatch):
+    from app.services.rate_limiter import login_rate_limiter
+    login_rate_limiter.reset()
+
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "CorrectPassword2026!")
+
+    # Attempts 1 through 5 with wrong password -> 401 Unauthorized
+    for attempt in range(1, 6):
+        res = client.post("/api/auth/login", json={"password": f"WrongAttempt{attempt}"})
+        assert res.status_code == 401
+        assert "Invalid credentials" in res.json()["detail"]
+
+    # 6th attempt -> 429 Too Many Requests (Lockout enforced)
+    res_locked = client.post("/api/auth/login", json={"password": "CorrectPassword2026!"})
+    assert res_locked.status_code == 429
+    assert "Too many failed login attempts" in res_locked.json()["detail"]
+    assert "Retry-After" in res_locked.headers
+    retry_after = int(res_locked.headers["Retry-After"])
+    assert retry_after > 0
+
+    # Cooldown recovery: after reset, legitimate login succeeds
+    login_rate_limiter.reset()
+    res_success = client.post("/api/auth/login", json={"password": "CorrectPassword2026!"})
+    assert res_success.status_code == 200
+    assert res_success.json()["authenticated"] is True
+
 
 

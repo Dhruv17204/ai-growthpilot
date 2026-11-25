@@ -77,7 +77,7 @@ def auth_client():
             token, session_id = create_server_session(db, role="user")
         finally:
             db.close()
-        csrf = create_csrf_token()
+        csrf = create_csrf_token(session_id=session_id)
         c.cookies.set(SESSION_COOKIE_NAME, token)
         c.cookies.set(CSRF_COOKIE_NAME, csrf)
         c.headers.update({"X-CSRF-Token": csrf})
@@ -93,7 +93,7 @@ def admin_client():
             token, session_id = create_server_session(db, role="admin")
         finally:
             db.close()
-        csrf = create_csrf_token()
+        csrf = create_csrf_token(session_id=session_id)
         c.cookies.set(SESSION_COOKIE_NAME, token)
         c.cookies.set(CSRF_COOKIE_NAME, csrf)
         c.headers.update({"X-CSRF-Token": csrf})

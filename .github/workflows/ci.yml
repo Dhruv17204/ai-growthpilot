@@ -141,12 +141,69 @@ jobs:
             echo "Database file not found in mounted volume before restart!"
             exit 1
           fi
-          echo "Restarting container to verify state persistence..."
+
+          # 1. Insert a uniquely identifiable test record via container Python runtime
+          echo "Inserting unique persistence test record..."
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = Campaign(
+              name='Persistence-Verification-Unique-Campaign',
+              product_service='Docker Volume Persistence',
+              target_audience='DevOps Verifiers',
+              objective='Verify database state across restart',
+              channel='Email',
+              overview='Record insertion before container restart',
+              main_message='State persisted successfully across restart',
+              status='Active'
+          )
+          db.add(record)
+          db.commit()
+          print(f'RECORD_ID={record.id}')
+          db.close()
+          " > /tmp/inserted_record.txt
+
+          RECORD_ID=$(grep -o 'RECORD_ID=[0-9]*' /tmp/inserted_record.txt | cut -d= -f2)
+          echo "Inserted record with ID: $RECORD_ID"
+
+          # 2. Confirm record exists before restart
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = db.query(Campaign).filter(Campaign.id == $RECORD_ID).first()
+          assert record is not None, 'Record not found before restart!'
+          assert record.name == 'Persistence-Verification-Unique-Campaign'
+          print('Confirmed record exists before restart.')
+          db.close()
+          "
+
+          # 3. Restart container
+          echo "Restarting container..."
           docker restart growthpilot-test
           sleep 5
           curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"'
-          test -f /tmp/growthpilot-data/growthpilot.db
-          echo "SQLite database persisted across container restart."
+
+          # 4. Query the same record again after restart
+          # 5. Confirm original value is preserved
+          # 6. Clean up test data safely
+          echo "Verifying record persistence and cleaning up..."
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = db.query(Campaign).filter(Campaign.id == $RECORD_ID).first()
+          assert record is not None, 'FAILURE: Record was lost after container restart!'
+          assert record.name == 'Persistence-Verification-Unique-Campaign', 'FAILURE: Record name was corrupted!'
+          assert record.product_service == 'Docker Volume Persistence', 'FAILURE: Data mismatch!'
+          print('SUCCESS: Record exactly preserved after container restart.')
+          db.delete(record)
+          db.commit()
+          db.close()
+          print('SUCCESS: Test record safely cleaned up.')
+          "
+          echo "SQLite persistence and state preservation verified successfully."
 
       - name: Clean Up Container
         if: always()

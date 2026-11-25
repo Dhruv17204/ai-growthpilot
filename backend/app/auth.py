@@ -134,23 +134,34 @@ def validate_session_token(token: Optional[str], db: Optional[Session] = None) -
 
     return {"session_id": session_id, "role": role, "expiry": expiry}
 
-def create_csrf_token() -> str:
-    """Creates a signed, expiring CSRF token."""
+def create_csrf_token(session_id: Optional[str] = None) -> str:
+    """Creates a signed, expiring CSRF token cryptographically bound to a session ID."""
     nonce = secrets.token_hex(16)
     expiry = int(time.time()) + 86400  # 24 hours
-    payload = f"csrf:{nonce}:{expiry}"
+    bound_id = session_id.strip() if session_id else "anon"
+    payload = f"csrf:{bound_id}:{nonce}:{expiry}"
     sig = hmac.new(settings.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}:{sig}"
 
-def validate_csrf_token(token: Optional[str]) -> bool:
-    """Validates signature and expiration of a CSRF token."""
+def validate_csrf_token(token: Optional[str], expected_session_id: Optional[str] = None) -> bool:
+    """
+    Validates signature, expiration, and session-binding of a CSRF token.
+    Uses constant-time comparison for HMAC signature check.
+    """
     if not token or not isinstance(token, str):
         return False
     parts = token.split(":")
-    if len(parts) != 4 or parts[0] != "csrf":
+    if len(parts) == 5 and parts[0] == "csrf":
+        _, bound_id, nonce, expiry_str, sig = parts
+        payload = f"csrf:{bound_id}:{nonce}:{expiry_str}"
+    elif len(parts) == 4 and parts[0] == "csrf":
+        # Fallback/legacy format: csrf:{nonce}:{expiry}:{sig}
+        _, nonce, expiry_str, sig = parts
+        bound_id = None
+        payload = f"csrf:{nonce}:{expiry_str}"
+    else:
         return False
-    _, nonce, expiry_str, sig = parts
-    payload = f"csrf:{nonce}:{expiry_str}"
+
     expected_sig = hmac.new(settings.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     if not secrets.compare_digest(sig, expected_sig):
         return False
@@ -160,6 +171,12 @@ def validate_csrf_token(token: Optional[str]) -> bool:
             return False
     except ValueError:
         return False
+
+    # Enforce session-binding when expected_session_id is provided
+    if expected_session_id is not None:
+        if bound_id is None or not secrets.compare_digest(bound_id, expected_session_id):
+            return False
+
     return True
 
 def require_authenticated_user(
@@ -203,13 +220,28 @@ def require_authenticated_user(
     if session_cookie:
         session_info = validate_session_token(session_cookie, db=db)
         if session_info:
+            session_id = session_info.get("session_id")
             # Enforce CSRF protection for state-changing HTTP methods
             if request.method in STATE_CHANGING_METHODS:
-                csrf_token = request.headers.get("X-CSRF-Token")
-                if not csrf_token or not validate_csrf_token(csrf_token):
+                csrf_header = request.headers.get("X-CSRF-Token")
+                csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+                # 1. Both header and cookie must be present
+                if not csrf_header or not csrf_cookie:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail="CSRF validation failed: Missing or invalid X-CSRF-Token header."
+                        detail="CSRF validation failed: Missing CSRF token in header or cookie."
+                    )
+                # 2. Header and cookie must match exactly (Double Submit)
+                if not secrets.compare_digest(csrf_header, csrf_cookie):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="CSRF validation failed: Token mismatch between header and cookie."
+                    )
+                # 3. Signature, expiration, and session-binding validation
+                if not validate_csrf_token(csrf_header, expected_session_id=session_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="CSRF validation failed: Invalid, expired, or session-mismatched CSRF token."
                     )
             return True
         else:
