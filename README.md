@@ -5,8 +5,8 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-63%20Passed-success.svg)](https://pytest.org)
-[![Coverage](https://img.shields.io/badge/Coverage-83%25-brightgreen.svg)](https://pytest.org)
+[![Tests](https://img.shields.io/badge/Tests-75%20Passed-success.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427)
+[![Coverage](https://img.shields.io/badge/Coverage-84.03%25%20(Backend)-brightgreen.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
 **AI GrowthPilot** is a full-stack, enterprise-grade business growth and marketing automation SaaS platform engineered specifically for small IT companies, software agencies, AI consultancies, and digital service providers.
@@ -183,7 +183,7 @@ pip install -r requirements.txt
 # Or for local development, linting, and testing:
 pip install -r requirements-dev.txt
 
-# Run backend test suite (17 passed)
+# Run backend test suite (72 passed)
 pytest -v
 
 # Launch backend server (runs on http://127.0.0.1:8000)
@@ -241,7 +241,11 @@ AI GrowthPilot explicitly separates three operational generation states:
 
 ---
 
-## 7. Automated Test Suite (63 Tests Passing — 83% Code Coverage)
+## 7. Automated Test Suite (75 Tests Passing — 84.03% Backend Statement Coverage)
+
+Verified via [GitHub Actions CI Run #45760370427](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427), the automated test harness executes **75 total tests** across the platform (72 backend Pytest tests and 3 frontend Vitest unit tests) with **zero failures** and **84.03% statement coverage on the backend**.
+
+### Backend Test Suite (Pytest — 72/72 Passed, 84.03% Statement Coverage)
 
 Run the automated backend test suite with coverage:
 ```powershell
@@ -249,9 +253,9 @@ cd backend
 .\venv\Scripts\pytest -v --cov=app --cov-report=term-missing
 ```
 
-**Results (63/63 Passed, 83% Coverage):**
-- **Authentication & CSRF (`tests/test_auth.py` — 19 Tests):**
-  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, logout, double-submit CSRF defense, expired/tampered token rejection, remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), replayed revoked session rejection (401), strict rejection of hardcoded development bypass tokens (`local-dev-bypass`), production loopback unauthenticated access lockdown, and unconfigured production login prevention.
+**Backend Results Breakdown (72 Passed across 6 Test Modules):**
+- **Authentication, CSRF & Concurrency (`tests/test_auth.py` — 28 Tests):**
+  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, session-bound double-submit CSRF defense, logout CSRF validation, expired/tampered token rejection, RFC 9110 HTTP method policy (TRACE 405, safe GET/HEAD/OPTIONS bypass), remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), replayed revoked session rejection (401), strict rejection of hardcoded development bypass tokens (`local-dev-bypass`), production loopback unauthenticated access lockdown, unconfigured production login prevention, sliding-window login rate limiting with rolling 60-second window, and deterministic barrier/burst concurrency tests proving atomic in-flight reservation.
 - **Analytics & Data Ingestion (`tests/test_analytics.py` — 6 Tests):**
   - Empty baseline resilience, global spend/revenue aggregation, channel-only metric aggregation, campaign deletion metric preservation, strict CSV column/date/value/duplicate validation.
 - **Lead Qualification Rubric (`tests/test_scoring.py` — 6 Tests):**
@@ -262,6 +266,20 @@ cd backend
   - Secret redaction, structure sanitization, 5MB chunked upload rejection, 5,000 row limits, admin key authentication, periodic retention worker data cleanup, database error resilience with graceful rollback, and async lifecycle start/stop management.
 - **API Core Integration (`tests/test_api.py` — 17 Tests):**
   - Full endpoint lifecycle verification across Business Profile, Strategy, Campaigns, Content, Leads, and Analytics.
+
+### Frontend Test Suite (Vitest — 3/3 Passed)
+
+Run the frontend unit test suite:
+```bash
+cd frontend
+npm test
+```
+
+**Frontend Results Breakdown (3 Passed across 2 Test Modules):**
+- **API Client Security & CSRF (`src/tests/client.test.ts` — 1 Test):**
+  - Automated CSRF token injection into mutating HTTP requests and credentialed cookie transmission.
+- **UI Component Rendering (`src/tests/StatCard.test.tsx` — 2 Tests):**
+  - Component mount, prop formatting, and visual badge verification.
 
 ---
 
