@@ -3,7 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { useQuery } from '@tanstack/react-query';
-import { api } from './lib/api';
+import { api } from './api/client';
 
 // Code-split route components for optimized bundle performance
 const OverviewPage = React.lazy(() => import('./pages/OverviewPage').then(m => ({ default: m.OverviewPage })));

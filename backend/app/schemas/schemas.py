@@ -1,6 +1,6 @@
 import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # --- Health & Config Schemas ---
 class HealthResponse(BaseModel):
@@ -295,6 +295,41 @@ class AIActivityResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+# --- Campaign Metric Schemas ---
+class CampaignMetricCreate(BaseModel):
+    campaign_id: Optional[int] = None
+    metric_date: datetime.date
+    channel: str
+    impressions: int = 0
+    clicks: int = 0
+    conversions: int = 0
+    spend: float = 0.0
+    revenue: float = 0.0
+
+class CampaignMetricResponse(BaseModel):
+    id: int
+    campaign_id: Optional[int] = None
+    metric_date: datetime.date
+    channel: str
+    impressions: int
+    clicks: int
+    conversions: int
+    spend: float
+    revenue: float
+    ctr: Optional[float] = None
+    cpl: Optional[float] = None
+    roi: Optional[float] = None
+    is_demo: bool = False
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class CampaignMetricsImportResult(BaseModel):
+    total_rows: int
+    successful_imports: int
+    error_count: int
+    errors: List[str] = []
+
 # --- Analytics Overview Schema ---
 class AnalyticsOverviewResponse(BaseModel):
     total_leads: int
@@ -314,3 +349,85 @@ class AnalyticsOverviewResponse(BaseModel):
     high_priority_leads: List[LeadResponse]
     upcoming_content: List[ContentItemResponse]
     is_demo_data: bool = True
+    has_sufficient_history: bool = True
+    total_spend: float = 0.0
+    total_revenue: float = 0.0
+
+# --- Strict AI Structured Response Models ---
+class ScoreFactorBreakdown(BaseModel):
+    score: int = Field(..., ge=0)
+    max: int = Field(..., ge=1)
+    reason: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_bounds(self):
+        if self.score > self.max:
+            raise ValueError(f"Score {self.score} cannot exceed maximum allowed {self.max}.")
+        return self
+
+class LeadScoreExplanation(BaseModel):
+    industry_alignment: ScoreFactorBreakdown
+    decision_maker_authority: ScoreFactorBreakdown
+    geographic_match: ScoreFactorBreakdown
+    company_size_fit: ScoreFactorBreakdown
+    source_intent: ScoreFactorBreakdown
+
+class LeadScoringAIResponse(BaseModel):
+    score: int = Field(..., ge=0, le=100)
+    qualification_category: str
+    business_fit_summary: str = Field(..., min_length=1)
+    suggested_next_action: str = Field(..., min_length=1)
+    score_explanation: LeadScoreExplanation
+
+    @model_validator(mode="after")
+    def validate_category_and_bounds(self):
+        cat = self.qualification_category
+        valid_cats = {"High Priority", "Medium Priority", "Low Priority"}
+        if cat not in valid_cats:
+            raise ValueError(f"Invalid qualification_category '{cat}'. Must be one of {valid_cats}.")
+
+        # Enforce consistency between score and category
+        if self.score >= 75 and cat != "High Priority":
+            raise ValueError(f"Category mismatch: score {self.score} requires 'High Priority', got '{cat}'.")
+        elif 50 <= self.score < 75 and cat != "Medium Priority":
+            raise ValueError(f"Category mismatch: score {self.score} requires 'Medium Priority', got '{cat}'.")
+        elif self.score < 50 and cat != "Low Priority":
+            raise ValueError(f"Category mismatch: score {self.score} requires 'Low Priority', got '{cat}'.")
+
+        # Validate max bounds for individual factors
+        exp = self.score_explanation
+        if exp.industry_alignment.score > exp.industry_alignment.max:
+            raise ValueError(f"Industry score {exp.industry_alignment.score} exceeds max {exp.industry_alignment.max}.")
+        if exp.decision_maker_authority.score > exp.decision_maker_authority.max:
+            raise ValueError(f"Authority score {exp.decision_maker_authority.score} exceeds max {exp.decision_maker_authority.max}.")
+        if exp.geographic_match.score > exp.geographic_match.max:
+            raise ValueError(f"Geography score {exp.geographic_match.score} exceeds max {exp.geographic_match.max}.")
+        if exp.company_size_fit.score > exp.company_size_fit.max:
+            raise ValueError(f"Company size score {exp.company_size_fit.score} exceeds max {exp.company_size_fit.max}.")
+        if exp.source_intent.score > exp.source_intent.max:
+            raise ValueError(f"Source intent score {exp.source_intent.score} exceeds max {exp.source_intent.max}.")
+
+        return self
+
+class StrategyAIResponse(BaseModel):
+    summary: str = Field(..., min_length=1)
+    ideal_customer_profiles: List[Dict[str, Any]] = Field(..., min_length=1)
+    target_market_insights: List[str] = Field(..., min_length=1)
+    customer_pain_points: List[str] = Field(..., min_length=1)
+    unique_value_proposition: str = Field(..., min_length=1)
+    marketing_objectives: List[Dict[str, Any]] = Field(..., min_length=1)
+    recommended_channels: List[Dict[str, Any]] = Field(..., min_length=1)
+    campaign_recommendations: List[Dict[str, Any]] = Field(..., min_length=1)
+    suggested_kpis: List[Dict[str, Any]] = Field(..., min_length=1)
+    thirty_day_plan: List[Dict[str, Any]] = Field(..., min_length=1)
+
+class CampaignAIResponse(BaseModel):
+    overview: str = Field(..., min_length=1)
+    main_message: str = Field(..., min_length=1)
+    headlines: List[str] = Field(..., min_length=3)
+    content_variations: List[Dict[str, Any]] = Field(..., min_length=2)
+    suggested_cta: str = Field(..., min_length=1)
+
+class ContentPlanAIResponse(BaseModel):
+    items: List[Dict[str, Any]] = Field(..., min_length=1)
+

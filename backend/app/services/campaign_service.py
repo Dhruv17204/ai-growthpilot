@@ -1,11 +1,11 @@
-import json
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.models import Campaign, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import CampaignAIResponse
 
 logger = logging.getLogger("growthpilot.campaigns")
 
@@ -69,7 +69,6 @@ Return a single JSON object with the following structure:
 """
 
 def generate_fallback_campaign(data: Dict[str, Any]) -> Dict[str, Any]:
-    name = data.get("name", "B2B Tech Launch")
     product = data.get("product_service", "AI Development & Automation")
     audience = data.get("target_audience", "Startup Founders & Operations Directors")
     channel = data.get("channel", "LinkedIn")
@@ -85,7 +84,7 @@ def generate_fallback_campaign(data: Dict[str, Any]) -> Dict[str, Any]:
         "main_message": f"Stop letting operational bottlenecks throttle your growth. Deploy custom {product} that scales with your ambition.",
         "headlines": [
             f"Cut Operational Overhead by 40% with Tailored {product}",
-            f"Why High-Growth Startups Are Ditching Generic Software for Custom AI",
+            "Why High-Growth Startups Are Ditching Generic Software for Custom AI",
             f"The Smart Founder's Shortcut to Enterprise-Grade {product}"
         ],
         "content_variations": [
@@ -184,7 +183,8 @@ async def generate_campaign(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=CAMPAIGN_SYSTEM_PROMPT,
-            temperature=0.4
+            temperature=0.4,
+            response_schema=CampaignAIResponse
         )
 
         log_prompt_execution(

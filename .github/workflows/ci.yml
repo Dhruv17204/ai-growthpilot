@@ -1,0 +1,234 @@
+name: CI Quality & Verification
+
+on:
+  push:
+    branches: [ "main", "phase-4/**" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  backend-test:
+    name: Backend Lint, Test & Coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Ruff Lint Checks
+        run: |
+          ruff check app tests
+
+      - name: Security Audit Python Dependencies
+        run: |
+          pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt
+
+      - name: Run Pytest with Coverage
+        run: |
+          pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+
+  frontend-build-test:
+    name: Frontend Build & Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Security Audit Dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Type Check & Production Build
+        run: npm run build
+
+      - name: Run Vitest Unit Tests
+        run: npm test
+
+  docker-verify:
+    name: Container Build & Deployment Verification
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-build-test]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t ai-growthpilot:test .
+
+      - name: Prepare SQLite Host Directory
+        run: |
+          mkdir -p /tmp/growthpilot-data
+          chmod 777 /tmp/growthpilot-data
+
+      - name: Start Docker Container
+        run: |
+          docker run -d --name growthpilot-test \
+            -p 8000:8000 \
+            -e ENVIRONMENT=production \
+            -e SESSION_SECRET="ci-production-session-secret-enforcement-at-least-32-chars-long" \
+            -e DATABASE_URL="sqlite:////app/backend/data/growthpilot.db" \
+            -v /tmp/growthpilot-data:/app/backend/data \
+            ai-growthpilot:test
+
+      - name: Poll Container Readiness
+        run: |
+          for i in {1..30}; do
+            if curl -s -f http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+              echo "Container is healthy and ready!"
+              exit 0
+            fi
+            echo "Waiting for container startup... ($i/30)"
+            sleep 2
+          done
+          echo "Container failed to start within timeout. Logs:"
+          docker logs growthpilot-test
+          exit 1
+
+      - name: Verify Root & API Health Endpoints
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Expected 200 for root, got $HTTP_STATUS"
+            exit 1
+          fi
+          curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"'
+
+      - name: Verify React SPA Deep Routes
+        run: |
+          curl -s -f http://127.0.0.1:8000/leads | grep -i "<html"
+          curl -s -f http://127.0.0.1:8000/campaigns | grep -i "<html"
+
+      - name: Verify Static Assets & Missing Asset 404
+        run: |
+          # Fetch index.html to find a generated asset name
+          ASSET_NAME=$(curl -s http://127.0.0.1:8000/ | grep -o 'assets/[^"]*\.js' | head -1)
+          if [ -n "$ASSET_NAME" ]; then
+            echo "Verifying real asset: $ASSET_NAME"
+            curl -s -f "http://127.0.0.1:8000/$ASSET_NAME" > /dev/null
+          fi
+          # Verify missing asset returns 404
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/assets/non_existent_asset.js)
+          if [ "$HTTP_STATUS" != "404" ]; then
+            echo "Expected 404 for missing asset, got $HTTP_STATUS"
+            exit 1
+          fi
+          echo "404 verified for missing static asset."
+
+      - name: Verify SQLite Persistence Across Container Restart
+        run: |
+          if [ ! -f /tmp/growthpilot-data/growthpilot.db ]; then
+            echo "Database file not found in mounted volume before restart!"
+            exit 1
+          fi
+
+          # 1. Insert a uniquely identifiable test record via container Python runtime
+          echo "Inserting unique persistence test record..."
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = Campaign(
+              name='Persistence-Verification-Unique-Campaign',
+              product_service='Docker Volume Persistence',
+              target_audience='DevOps Verifiers',
+              objective='Verify database state across restart',
+              channel='Email',
+              overview='Record insertion before container restart',
+              main_message='State persisted successfully across restart',
+              status='Active'
+          )
+          db.add(record)
+          db.commit()
+          print(f'RECORD_ID={record.id}')
+          db.close()
+          " > /tmp/inserted_record.txt
+
+          RECORD_ID=$(grep -o 'RECORD_ID=[0-9]*' /tmp/inserted_record.txt | cut -d= -f2)
+          echo "Inserted record with ID: $RECORD_ID"
+
+          # 2. Confirm record exists before restart
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = db.query(Campaign).filter(Campaign.id == $RECORD_ID).first()
+          assert record is not None, 'Record not found before restart!'
+          assert record.name == 'Persistence-Verification-Unique-Campaign'
+          print('Confirmed record exists before restart.')
+          db.close()
+          "
+
+          # 3. Restart container and poll for health readiness
+          echo "Restarting container..."
+          docker restart growthpilot-test
+          for i in {1..30}; do
+            if curl -s -f http://127.0.0.1:8000/api/health | grep '"status":"healthy"' > /dev/null 2>&1; then
+              echo "Container restarted and healthy!"
+              break
+            fi
+            echo "Waiting for container readiness after restart... ($i/30)"
+            sleep 1
+          done
+
+          # 4. Query the same record again after restart
+          # 5. Confirm original values are preserved across multiple fields
+          # 6. Clean up test data safely
+          echo "Verifying record persistence and cleaning up..."
+          docker exec growthpilot-test python -c "
+          from app.database import SessionLocal
+          from app.models.models import Campaign
+          db = SessionLocal()
+          record = db.query(Campaign).filter(Campaign.id == $RECORD_ID).first()
+          assert record is not None, 'FAILURE: Record was lost after container restart!'
+          assert record.name == 'Persistence-Verification-Unique-Campaign', 'FAILURE: Record name was corrupted!'
+          assert record.product_service == 'Docker Volume Persistence', 'FAILURE: Data mismatch on product_service!'
+          assert record.target_audience == 'DevOps Verifiers', 'FAILURE: Data mismatch on target_audience!'
+          assert record.objective == 'Verify database state across restart', 'FAILURE: Data mismatch on objective!'
+          assert record.channel == 'Email', 'FAILURE: Data mismatch on channel!'
+          assert record.status == 'Active', 'FAILURE: Data mismatch on status!'
+          print('SUCCESS: Record exactly preserved with all verified fields after container restart.')
+          db.delete(record)
+          db.commit()
+          db.close()
+          print('SUCCESS: Test record safely cleaned up.')
+          "
+          echo "SQLite persistence and state preservation verified successfully."
+
+      - name: Clean Up Container
+        if: always()
+        run: |
+          docker stop growthpilot-test || true
+          docker rm growthpilot-test || true

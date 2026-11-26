@@ -1,4 +1,3 @@
-import json
 import datetime
 import logging
 from typing import Dict, Any, List, Tuple, Optional
@@ -7,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.models import ContentItem, BusinessProfile, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import ContentPlanAIResponse
 
 logger = logging.getLogger("growthpilot.content")
 
@@ -45,7 +45,7 @@ Return a single JSON object with the following structure:
 
 def generate_fallback_content_plan(data: Dict[str, Any], company_name: str, services: str, days: int = 7) -> Dict[str, Any]:
     theme = data.get("theme") or "Accelerating Tech Delivery with Custom AI"
-    
+
     items = [
         {
             "day_offset": 1,
@@ -69,13 +69,13 @@ def generate_fallback_content_plan(data: Dict[str, Any], company_name: str, serv
             "title": "3 Critical Lessons from Modernizing a Legacy Workflow",
             "channel": "LinkedIn",
             "content_text": (
-                f"When we audit client systems, the biggest risk is rarely the technology itself — it's unmapped dependencies.\n\n"
-                f"Three rules we follow when deploying automated intelligence pipelines:\n"
-                f"• Never automate an unoptimized process\n"
-                f"• Keep a human-in-the-loop validation threshold for critical decisions\n"
-                f"• Measure throughput delta weekly, not quarterly\n\n"
-                f"What is the single biggest bottleneck in your team's workflow right now?\n\n"
-                f"#WorkflowAutomation #Engineering"
+                "When we audit client systems, the biggest risk is rarely the technology itself — it's unmapped dependencies.\n\n"
+                "Three rules we follow when deploying automated intelligence pipelines:\n"
+                "• Never automate an unoptimized process\n"
+                "• Keep a human-in-the-loop validation threshold for critical decisions\n"
+                "• Measure throughput delta weekly, not quarterly\n\n"
+                "What is the single biggest bottleneck in your team's workflow right now?\n\n"
+                "#WorkflowAutomation #Engineering"
             ),
             "target_audience": "Heads of Engineering & Product",
             "tags": ["#WorkflowAutomation", "#Engineering"]
@@ -85,10 +85,10 @@ def generate_fallback_content_plan(data: Dict[str, Any], company_name: str, serv
             "title": "Visualizing Real-Time Business Intelligence",
             "channel": "Instagram",
             "content_text": (
-                f"Dashboards shouldn't just look pretty — they should make your next business decision obvious.\n\n"
-                f"Swipe to see how we transform raw unstructured logs into actionable executive KPI cockpits in 14 days.\n\n"
-                f"💡 Save this post for your next tech planning sprint.\n\n"
-                f"#BusinessIntelligence #DataEngineering #DevLife"
+                "Dashboards shouldn't just look pretty — they should make your next business decision obvious.\n\n"
+                "Swipe to see how we transform raw unstructured logs into actionable executive KPI cockpits in 14 days.\n\n"
+                "💡 Save this post for your next tech planning sprint.\n\n"
+                "#BusinessIntelligence #DataEngineering #DevLife"
             ),
             "target_audience": "Startup Founders & Tech Leaders",
             "tags": ["#BusinessIntelligence", "#DataEngineering"]
@@ -98,12 +98,12 @@ def generate_fallback_content_plan(data: Dict[str, Any], company_name: str, serv
             "title": "Case Study Teardown: Cutting Pipeline Latency by 65%",
             "channel": "Blog",
             "content_text": (
-                f"Deep-dive teardown of how modern data engineering architectures eliminate batch processing delays.\n\n"
-                f"Key Takeaways:\n"
-                f"- Architecture diagrams comparing legacy ETL vs streaming pipelines\n"
-                f"- Database query indexing strategies that saved 14 hours/week\n"
-                f"- Code snippets and performance benchmarks before and after deployment\n\n"
-                f"Read the full engineering post on our website."
+                "Deep-dive teardown of how modern data engineering architectures eliminate batch processing delays.\n\n"
+                "Key Takeaways:\n"
+                "- Architecture diagrams comparing legacy ETL vs streaming pipelines\n"
+                "- Database query indexing strategies that saved 14 hours/week\n"
+                "- Code snippets and performance benchmarks before and after deployment\n\n"
+                "Read the full engineering post on our website."
             ),
             "target_audience": "Technical Founders & Architects",
             "tags": ["#DataEngineering", "#Architecture"]
@@ -146,11 +146,11 @@ def generate_fallback_content_plan(data: Dict[str, Any], company_name: str, serv
             "title": "Open Invitation: Free 15-Minute Architecture Review",
             "channel": "LinkedIn",
             "content_text": (
-                f"Planning your Q3 software roadmap or looking to integrate AI into your core platform?\n\n"
-                f"We are offering 5 complimentary 15-minute technical audit sessions this week for founders and ops directors.\n\n"
-                f"No sales pitch. Just honest architectural feedback on your current stack and automation opportunities.\n\n"
-                f"👉 Link in comments to reserve a slot before they are booked.\n\n"
-                f"#B2B #TechConsulting #StartupGrowth"
+                "Planning your Q3 software roadmap or looking to integrate AI into your core platform?\n\n"
+                "We are offering 5 complimentary 15-minute technical audit sessions this week for founders and ops directors.\n\n"
+                "No sales pitch. Just honest architectural feedback on your current stack and automation opportunities.\n\n"
+                "👉 Link in comments to reserve a slot before they are booked.\n\n"
+                "#B2B #TechConsulting #StartupGrowth"
             ),
             "target_audience": "Active Prospects & Decision Makers",
             "tags": ["#B2B", "#TechConsulting", "#StartupGrowth"]
@@ -171,7 +171,7 @@ async def generate_content_plan(
     company_name = profile.company_name if profile else "NovaTech Solutions"
     services = ", ".join(profile.services) if profile and profile.services else "AI Development, Web Dev, Data Engineering"
     target_audience = ", ".join(profile.target_audience) if profile and profile.target_audience else "Startup Founders, Operations Managers"
-    
+
     days = plan_data.get("days", 7)
     focus_channel = plan_data.get("focus_channel", "All Channels")
     theme = plan_data.get("theme", "Accelerating Business Growth with Custom AI & Automation")
@@ -214,7 +214,8 @@ async def generate_content_plan(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=CONTENT_SYSTEM_PROMPT,
-            temperature=0.4
+            temperature=0.4,
+            response_schema=ContentPlanAIResponse
         )
 
         log_prompt_execution(

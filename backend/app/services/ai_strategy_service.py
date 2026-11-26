@@ -1,11 +1,11 @@
-import json
 import logging
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.models.models import BusinessProfile, GrowthStrategy, AIActivity
+from app.models.models import GrowthStrategy, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import StrategyAIResponse
 
 logger = logging.getLogger("growthpilot.strategy")
 
@@ -317,7 +317,8 @@ async def generate_growth_strategy(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=STRATEGY_SYSTEM_PROMPT,
-            temperature=0.3
+            temperature=0.3,
+            response_schema=StrategyAIResponse
         )
 
         # Log execution attempt in audit history

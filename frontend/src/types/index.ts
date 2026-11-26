@@ -256,3 +256,21 @@ export interface HealthInfo {
 }
 
 export type HealthStatus = HealthInfo;
+
+export interface CampaignMetric {
+  id: number;
+  campaign_id?: number;
+  date: string;
+  channel: string;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  spend: number;
+  revenue: number;
+  ctr?: number;
+  cpl?: number;
+  roi?: number;
+  is_demo: boolean;
+  created_at: string;
+}
+

@@ -3,7 +3,7 @@ import logging
 from sqlalchemy.orm import Session
 from app.models.models import (
     BusinessProfile, GrowthStrategy, Campaign, ContentItem,
-    Lead, LeadNote, PromptTemplate, PromptExecution, AIActivity
+    Lead, LeadNote, PromptTemplate, PromptExecution, AIActivity, CampaignMetric
 )
 from app.services.prompt_service import DEFAULT_PROMPT_TEMPLATES
 from app.services.lead_scoring_service import heuristic_lead_score
@@ -16,7 +16,7 @@ def seed_database(db: Session, force_reset: bool = False):
     benchmark prompt iterations, campaigns, content items, and scored leads.
     All data is clearly labelled with is_demo=True.
     """
-    existing_profile = db.query(BusinessProfile).filter(BusinessProfile.is_demo == True).first()
+    existing_profile = db.query(BusinessProfile).filter(BusinessProfile.is_demo.is_(True)).first()
     if existing_profile and not force_reset:
         logger.info("Database already seeded with demo profile. Skipping initial seeding.")
         return
@@ -24,17 +24,18 @@ def seed_database(db: Session, force_reset: bool = False):
     if force_reset:
         logger.info("Force resetting demo records for clean seed (preserving user-created data)...")
         # Only delete demo records so user leads, campaigns, content, and strategies are preserved
-        demo_lead_ids = [l.id for l in db.query(Lead.id).filter(Lead.is_demo == True).all()]
+        demo_lead_ids = [row.id for row in db.query(Lead.id).filter(Lead.is_demo.is_(True)).all()]
         if demo_lead_ids:
             db.query(LeadNote).filter(LeadNote.lead_id.in_(demo_lead_ids)).delete(synchronize_session=False)
-        db.query(Lead).filter(Lead.is_demo == True).delete(synchronize_session=False)
-        db.query(ContentItem).filter(ContentItem.is_demo == True).delete(synchronize_session=False)
-        db.query(Campaign).filter(Campaign.is_demo == True).delete(synchronize_session=False)
-        db.query(GrowthStrategy).filter(GrowthStrategy.is_demo == True).delete(synchronize_session=False)
-        db.query(BusinessProfile).filter(BusinessProfile.is_demo == True).delete(synchronize_session=False)
-        db.query(PromptExecution).filter(PromptExecution.is_example == True).delete(synchronize_session=False)
+        db.query(Lead).filter(Lead.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(ContentItem).filter(ContentItem.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(Campaign).filter(Campaign.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(CampaignMetric).filter(CampaignMetric.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(GrowthStrategy).filter(GrowthStrategy.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(BusinessProfile).filter(BusinessProfile.is_demo.is_(True)).delete(synchronize_session=False)
+        db.query(PromptExecution).filter(PromptExecution.is_example.is_(True)).delete(synchronize_session=False)
         db.query(PromptTemplate).delete(synchronize_session=False)
-        db.query(AIActivity).filter(AIActivity.is_demo == True).delete(synchronize_session=False)
+        db.query(AIActivity).filter(AIActivity.is_demo.is_(True)).delete(synchronize_session=False)
         db.commit()
 
     # 1. Seed Business Profile (NovaTech Solutions)
@@ -340,6 +341,46 @@ def seed_database(db: Session, force_reset: bool = False):
     db.add(c1)
     db.add(c2)
     db.commit()
+
+    # Seed Demonstration Campaign Metrics
+    cm1 = CampaignMetric(
+        campaign_id=c1.id,
+        metric_date=datetime.date.today() - datetime.timedelta(days=7),
+        channel="LinkedIn",
+        impressions=1850,
+        clicks=142,
+        conversions=9,
+        spend=450.0,
+        revenue=1800.0,
+        is_demo=True
+    )
+    cm2 = CampaignMetric(
+        campaign_id=c1.id,
+        metric_date=datetime.date.today() - datetime.timedelta(days=1),
+        channel="LinkedIn",
+        impressions=2100,
+        clicks=168,
+        conversions=12,
+        spend=520.0,
+        revenue=2400.0,
+        is_demo=True
+    )
+    cm3 = CampaignMetric(
+        campaign_id=c2.id,
+        metric_date=datetime.date.today() - datetime.timedelta(days=4),
+        channel="Google Ads",
+        impressions=3200,
+        clicks=215,
+        conversions=14,
+        spend=850.0,
+        revenue=3200.0,
+        is_demo=True
+    )
+    db.add(cm1)
+    db.add(cm2)
+    db.add(cm3)
+    db.commit()
+
 
     # 6. Seed Content Calendar Items
     now = datetime.datetime.utcnow()

@@ -5,13 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import Lead, BusinessProfile, LeadNote
 from app.schemas.schemas import (
-    LeadResponse, LeadCreate, LeadUpdate, LeadNoteCreate, LeadNoteResponse, CSVImportResult
+    LeadResponse, LeadUpdate, LeadNoteCreate, LeadNoteResponse, CSVImportResult
 )
-from app.services.lead_scoring_service import process_leads_csv, score_single_lead, heuristic_lead_score
+from app.services.lead_scoring_service import process_leads_csv, score_single_lead
 
-router = APIRouter(prefix="/leads", tags=["Lead Intelligence"])
+router = APIRouter(prefix="/leads", tags=["Lead Intelligence"], dependencies=[Depends(require_authenticated_user)])
 
 MAX_CSV_BYTES = 5 * 1024 * 1024 # 5 MB upload limit
 
@@ -35,12 +36,23 @@ async def import_leads_csv(file: UploadFile = File(...), db: Session = Depends(g
             detail="Invalid file type. Please upload a standard CSV file with .csv extension."
         )
 
-    content = await file.read()
-    if len(content) > MAX_CSV_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Uploaded file exceeds maximum limit of {MAX_CSV_BYTES // (1024 * 1024)} MB."
-        )
+    # Bounded 64KB chunk reading to guard against unbounded memory consumption
+    CHUNK_SIZE = 64 * 1024  # 64 KB
+    chunks = []
+    total_bytes = 0
+    while True:
+        chunk = await file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > MAX_CSV_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Uploaded file exceeds maximum limit of {MAX_CSV_BYTES // (1024 * 1024)} MB."
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
 
     profile = db.query(BusinessProfile).first()
     result = process_leads_csv(db, content, profile)
@@ -98,23 +110,23 @@ def export_leads_csv(db: Session = Depends(get_db)):
         "Location", "Company Size", "Lead Source", "Score", "Priority",
         "Status", "Business Fit Summary", "Suggested Next Action"
     ])
-    for l in leads:
+    for lead in leads:
         # Sanitize every field to prevent CSV formula injection
         writer.writerow([
-            sanitize_csv_cell(l.name),
-            sanitize_csv_cell(l.company),
-            sanitize_csv_cell(l.email),
-            sanitize_csv_cell(l.website),
-            sanitize_csv_cell(l.industry),
-            sanitize_csv_cell(l.job_title),
-            sanitize_csv_cell(l.location),
-            sanitize_csv_cell(l.company_size),
-            sanitize_csv_cell(l.lead_source),
-            l.score,
-            l.qualification_category,
-            l.status,
-            sanitize_csv_cell(l.business_fit_summary),
-            sanitize_csv_cell(l.suggested_next_action)
+            sanitize_csv_cell(lead.name),
+            sanitize_csv_cell(lead.company),
+            sanitize_csv_cell(lead.email),
+            sanitize_csv_cell(lead.website),
+            sanitize_csv_cell(lead.industry),
+            sanitize_csv_cell(lead.job_title),
+            sanitize_csv_cell(lead.location),
+            sanitize_csv_cell(lead.company_size),
+            sanitize_csv_cell(lead.lead_source),
+            lead.score,
+            lead.qualification_category,
+            lead.status,
+            sanitize_csv_cell(lead.business_fit_summary),
+            sanitize_csv_cell(lead.suggested_next_action)
         ])
 
     output.seek(0)

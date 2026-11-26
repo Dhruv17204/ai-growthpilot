@@ -1,5 +1,4 @@
 import io
-import pytest
 
 def test_health_check(client):
     res = client.get("/api/health")
@@ -195,13 +194,21 @@ Bad Email,Broken Corp,not-an-email-at-all,Technology,CEO,Sydney,11-50,LinkedIn
 
 def test_lead_scoring_heuristic_rubric_weights():
     from app.services.lead_scoring_service import heuristic_lead_score
+    from app.models.models import BusinessProfile
+    profile = BusinessProfile(
+        company_name="NovaTech Solutions",
+        industry="B2B Technology",
+        services=["Software"],
+        target_audience=["Tech Leaders"],
+        target_geography=["Australia"]
+    )
     score_data = heuristic_lead_score({
         "industry": "B2B Technology",
         "job_title": "Founder & CEO",
         "location": "Sydney, Australia",
         "company_size": "51-200",
         "lead_source": "Referral"
-    }, profile=None)
+    }, profile=profile)
 
     assert score_data["score"] == 100
     assert score_data["qualification_category"] == "High Priority"
@@ -211,6 +218,17 @@ def test_lead_scoring_heuristic_rubric_weights():
     assert explanation["geographic_match"]["score"] == 20
     assert explanation["company_size_fit"]["score"] == 15
     assert explanation["source_intent"]["score"] == 10
+
+    # Without configured seller profile target geography, neutral baseline (10/20) is awarded
+    unconfigured_data = heuristic_lead_score({
+        "industry": "B2B Technology",
+        "job_title": "Founder & CEO",
+        "location": "Sydney, Australia",
+        "company_size": "51-200",
+        "lead_source": "Referral"
+    }, profile=None)
+    assert unconfigured_data["score"] == 90
+    assert unconfigured_data["score_explanation"]["geographic_match"]["score"] == 10
 
     # Low alignment test
     low_data = heuristic_lead_score({
@@ -228,7 +246,7 @@ def test_ai_error_handling_when_gemini_fails(client):
     with patch("app.services.gemini_client.gemini_client.generate_structured_json", new_callable=AsyncMock) as mock_gemini:
         with patch("app.services.gemini_client.gemini_client.is_configured", return_value=True):
             mock_gemini.return_value = (None, 150, "error", "API Key Invalid or Quota Exhausted")
-            
+
             res = client.post("/api/ai/strategy", json={
                 "profile_override": {
                     "company_name": "Test Enterprise",

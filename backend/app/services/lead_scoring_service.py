@@ -1,15 +1,14 @@
 import io
 import re
-import csv
-import json
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import HTTPException
 import pandas as pd
 from sqlalchemy.orm import Session
-from app.models.models import Lead, BusinessProfile, AIActivity, LeadNote
+from app.models.models import Lead, BusinessProfile, AIActivity
 from app.services.gemini_client import gemini_client
 from app.services.prompt_service import log_prompt_execution
+from app.schemas.schemas import LeadScoringAIResponse
 
 logger = logging.getLogger("growthpilot.leads")
 
@@ -58,6 +57,43 @@ Return a single JSON object with the following structure:
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 
+def matches_token(text: str, candidates: List[str]) -> bool:
+    """
+    Checks if any candidate token/phrase appears as a whole word/phrase in text.
+    Avoids false positives from naive substring matching (e.g. 'ai' in 'training',
+    or 'us' in 'business bay').
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    for candidate in candidates:
+        cand_lower = candidate.lower().strip()
+        if not cand_lower:
+            continue
+        pattern = r"\b" + re.escape(cand_lower) + r"\b"
+        if re.search(pattern, text_lower):
+            return True
+    return False
+
+def normalize_geo(loc: str) -> str:
+    """Normalizes country/region tokens for consistent geography scoring."""
+    if not loc:
+        return "unspecified"
+    loc_lower = loc.lower().strip()
+    if re.search(r"\b(us|usa|united states|america|california|san francisco|new york|austin|seattle|chicago|texas)\b", loc_lower):
+        return "united states"
+    if re.search(r"\b(au|aus|australia|sydney|melbourne|brisbane|perth|adelaide)\b", loc_lower):
+        return "australia"
+    if re.search(r"\b(in|ind|india|bengaluru|bangalore|mumbai|delhi|pune|hyderabad|chennai)\b", loc_lower):
+        return "india"
+    if re.search(r"\b(uk|united kingdom|britain|great britain|london|manchester)\b", loc_lower):
+        return "united kingdom"
+    if re.search(r"\b(canada|toronto|vancouver|montreal)\b", loc_lower):
+        return "canada"
+    if re.search(r"\b(germany|berlin|munich|france|paris|europe)\b", loc_lower):
+        return "europe"
+    return loc_lower
+
 def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile]) -> Dict[str, Any]:
     """
     Calibrated, transparent mathematical evaluation engine adhering to documented weights:
@@ -67,85 +103,134 @@ def heuristic_lead_score(lead: Dict[str, Any], profile: Optional[BusinessProfile
     - Company Size: 15%
     - Source Intent: 10%
     Total: 100%
+
+    Uses regex word boundary token matching to prevent false positives.
     """
-    industry = (lead.get("industry") or "").lower()
-    title = (lead.get("job_title") or "").lower()
-    loc = (lead.get("location") or "").lower()
-    size = (lead.get("company_size") or "").lower()
-    source = (lead.get("lead_source") or "").lower()
+    industry = (lead.get("industry") or "").strip()
+    title = (lead.get("job_title") or "").strip()
+    loc = (lead.get("location") or "").strip()
+    size = (lead.get("company_size") or "").strip().lower()
+    source = (lead.get("lead_source") or "").strip()
 
     # 1. Industry Alignment (Max 30 pts - 30%)
-    prime_industries = ["tech", "software", "saas", "fintech", "ecommerce", "retail", "logistics", "ai", "data", "cloud", "robotics"]
-    secondary_industries = ["consulting", "services", "health", "manufacturing", "proptech", "legal", "edtech", "cleantech"]
+    prime_industries = [
+        "tech", "technology", "software", "saas", "fintech", "ecommerce",
+        "retail", "logistics", "ai", "artificial intelligence", "data", "cloud", "robotics"
+    ]
+    if profile and profile.industry:
+        for word in re.findall(r"\b[a-zA-Z]{3,}\b", profile.industry.lower()):
+            if word not in prime_industries:
+                prime_industries.append(word)
 
-    if any(ind in industry for ind in prime_industries):
+    secondary_industries = [
+        "consulting", "services", "health", "healthcare", "manufacturing",
+        "proptech", "legal", "edtech", "cleantech", "finance", "telecom"
+    ]
+
+    unrelated_industries = [
+        "refrigeration", "mining", "plumbing", "agriculture", "construction",
+        "heavy equipment", "waste management", "automotive repair", "quarrying"
+    ]
+
+    if not industry or industry.lower() in ("unspecified", "unknown", "n/a", "none"):
+        ind_score = 5
+        ind_reason = "Unspecified Lead Industry (5/30): Missing data; baseline applied."
+    elif matches_token(industry, prime_industries):
         ind_score = 30
         ind_reason = f"Prime ICP Alignment (30/30): '{lead.get('industry')}' is a core buyer for automation & development services."
-    elif any(ind in industry for ind in secondary_industries):
-        ind_score = 22
-        ind_reason = f"Good Industry Fit (22/30): '{lead.get('industry')}' frequently commissions workflow automation & custom software."
-    elif industry:
-        ind_score = 15
-        ind_reason = f"Moderate Industry Fit (15/30): '{lead.get('industry')}' has general tech modernisation potential."
+    elif matches_token(industry, secondary_industries):
+        ind_score = 20
+        ind_reason = f"Good Industry Fit (20/30): '{lead.get('industry')}' frequently commissions workflow automation & custom software."
+    elif matches_token(industry, unrelated_industries):
+        ind_score = 6
+        ind_reason = f"Low ICP Fit (6/30): '{lead.get('industry')}' has minimal demand for custom software/AI services."
     else:
-        ind_score = 10
-        ind_reason = "Unspecified Industry (10/30): Baseline assumption applied."
+        ind_score = 12
+        ind_reason = f"Moderate Industry Fit (12/30): '{lead.get('industry')}' has general tech modernisation potential."
 
     # 2. Decision Maker Authority (Max 25 pts - 25%)
-    high_auth_keywords = ["founder", "ceo", "cto", "coo", "chief", "vp", "director", "head of", "owner", "president", "managing director"]
-    med_auth_keywords = ["manager", "lead", "architect", "strategist", "supervisor", "consultant"]
+    high_auth_keywords = [
+        "founder", "ceo", "cto", "coo", "cmo", "cio", "chief", "vp",
+        "vice president", "director", "head of", "owner", "president", "managing director", "partner"
+    ]
+    med_auth_keywords = [
+        "manager", "lead", "architect", "strategist", "supervisor", "consultant", "senior engineer"
+    ]
 
-    if any(k in title for k in high_auth_keywords):
+    if not title or title.lower() in ("unspecified", "unknown", "n/a", "none"):
+        auth_score = 5
+        auth_reason = "Unspecified Role (5/25): Missing title data."
+    elif matches_token(title, high_auth_keywords):
         auth_score = 25
         auth_reason = f"Executive Decision Maker (25/25): '{lead.get('job_title')}' possesses fiscal and strategic approval authority."
-    elif any(k in title for k in med_auth_keywords):
-        auth_score = 17
-        auth_reason = f"Department Influencer (17/25): '{lead.get('job_title')}' can sponsor initiatives and initiate vendor evaluations."
-    elif title:
+    elif matches_token(title, med_auth_keywords):
+        auth_score = 16
+        auth_reason = f"Department Influencer (16/25): '{lead.get('job_title')}' can sponsor initiatives and initiate vendor evaluations."
+    else:
         auth_score = 10
         auth_reason = f"Individual Contributor (10/25): '{lead.get('job_title')}' may require executive escalation."
-    else:
-        auth_score = 8
-        auth_reason = "Unspecified Role (8/25): Baseline assumption applied."
 
     # 3. Geographic Match (Max 20 pts - 20%)
-    geo_keywords = [
-        "australia", "sydney", "melbourne", "brisbane", "perth",
-        "united states", "usa", "us", "san francisco", "new york", "austin", "seattle", "chicago",
-        "india", "bengaluru", "mumbai", "delhi", "pune", "hyderabad"
-    ]
-    if any(g in loc for g in geo_keywords):
-        geo_score = 20
-        geo_reason = f"Primary Market (20/20): '{lead.get('location')}' is directly covered in target delivery regions."
-    elif loc and loc != "global":
-        geo_score = 13
-        geo_reason = f"Secondary Market (13/20): '{lead.get('location')}' can be served via remote delivery."
+    norm_loc = normalize_geo(loc)
+    seller_has_geos = bool(profile and profile.target_geography and any(g.strip() for g in profile.target_geography))
+
+    if seller_has_geos:
+        target_geos = [normalize_geo(g) for g in profile.target_geography if g.strip()]
+        if norm_loc in target_geos:
+            geo_score = 20
+            geo_reason = f"Primary Market (20/20): '{lead.get('location')}' matches seller's configured target geography."
+        elif norm_loc in ["united states", "australia", "india", "united kingdom", "canada", "europe"]:
+            geo_score = 12
+            geo_reason = f"Secondary Market (12/20): '{lead.get('location')}' can be served via remote delivery."
+        elif loc and loc.lower() not in ("global", "unspecified", "unknown"):
+            geo_score = 8
+            geo_reason = f"International Region (8/20): '{lead.get('location')}' is outside seller target regions."
+        else:
+            geo_score = 5
+            geo_reason = "Unspecified Location (5/20): Missing location data."
     else:
-        geo_score = 10
-        geo_reason = "Global/Unspecified (10/20): Remote feasibility assumed."
+        # Transparently disclose seller has NOT configured target geography
+        if norm_loc in ["united states", "australia", "india", "united kingdom", "canada", "europe"]:
+            geo_score = 10
+            geo_reason = f"Global Tech Region (10/20): '{lead.get('location')}' baseline (Seller target geography unconfigured)."
+        elif loc and loc.lower() not in ("global", "unspecified", "unknown"):
+            geo_score = 8
+            geo_reason = f"International Region (8/20): '{lead.get('location')}' (Seller target geography unconfigured)."
+        else:
+            geo_score = 5
+            geo_reason = "Unspecified Geography (5/20): Missing lead location and unconfigured seller target geography."
 
     # 4. Company Size Fit (Max 15 pts - 15%)
-    if any(s in size for s in ["51-200", "201-500", "50-100", "100-250"]):
+    if not size or size in ("unspecified", "unknown", "n/a", "none"):
+        size_score = 5
+        size_reason = "Unspecified Size (5/15): Missing company headcount data."
+    elif any(s in size for s in ["51-200", "201-500", "50-100", "100-250"]):
         size_score = 15
         size_reason = f"Sweet Spot ICP (15/15): '{lead.get('company_size')}' companies have dedicated budget and agility."
     elif any(s in size for s in ["11-50", "10-50"]):
         size_score = 12
         size_reason = f"Strong Startup ICP (12/15): '{lead.get('company_size')}' moves quickly on modern tech adoption."
-    elif any(s in size for s in ["500+", "1000+", "enterprise"]):
+    elif any(s in size for s in ["500+", "1000+", "enterprise", "1000-5000"]):
         size_score = 10
         size_reason = f"Large Enterprise (10/15): '{lead.get('company_size')}' has high deal value but lengthy procurement cycles."
-    elif any(s in size for s in ["1-10", "1-5", "micro"]):
-        size_score = 8
-        size_reason = f"Small Team (8/15): '{lead.get('company_size')}'; budget may be constrained."
-    else:
+    elif any(s in size for s in ["1-10", "1-5", "micro", "self-employed"]):
         size_score = 7
-        size_reason = "Unspecified Size (7/15): Default baseline applied."
+        size_reason = f"Small Team (7/15): '{lead.get('company_size')}'; budget may be constrained."
+    else:
+        size_score = 6
+        size_reason = f"Specified Size (6/15): '{lead.get('company_size')}' outside primary target tiers."
 
     # 5. Source Intent (Max 10 pts - 10%)
-    if any(src in source for src in ["website", "demo request", "inbound", "referral", "contact form"]):
+    high_intent_sources = ["website", "demo request", "inbound", "referral", "contact form", "pricing page"]
+    med_intent_sources = ["linkedin", "event", "webinar", "organic", "content download"]
+
+    if not source or source.lower() in ("unspecified", "unknown", "n/a", "none"):
+        src_score = 4
+        src_reason = "Unspecified Lead Source (4/10): Source intent unknown."
+    elif matches_token(source, high_intent_sources):
         src_score = 10
         src_reason = f"High Commercial Intent (10/10): '{lead.get('lead_source')}' indicates proactive solution seeking."
-    elif any(src in source for src in ["linkedin", "event", "webinar", "organic"]):
+    elif matches_token(source, med_intent_sources):
         src_score = 7
         src_reason = f"Moderate Intent (7/10): Engaged via '{lead.get('lead_source')}'."
     else:
@@ -245,7 +330,8 @@ async def score_single_lead(
         parsed_json, latency, status, error_msg = await gemini_client.generate_structured_json(
             prompt=prompt,
             system_instruction=LEAD_SCORER_SYSTEM_PROMPT,
-            temperature=0.2
+            temperature=0.2,
+            response_schema=LeadScoringAIResponse
         )
 
         log_prompt_execution(
@@ -266,7 +352,7 @@ async def score_single_lead(
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "error": error_msg or "Gemini API lead scoring failed.",
+                    "error": error_msg or "Gemini API lead scoring failed strict schema validation.",
                     "offer_demo_mode": True,
                     "message": f"Gemini lead scoring failed: {error_msg or 'Incomplete score schema'}. You can retry or use rule-based scoring."
                 }
@@ -409,6 +495,17 @@ def process_leads_csv(
             "sample_leads": []
         }
 
+    # Enforce maximum row limit (5,000 rows)
+    if len(df) > 5000:
+        return {
+            "total_rows": len(df),
+            "successful_imports": 0,
+            "duplicate_count": 0,
+            "error_count": 1,
+            "errors": ["CSV exceeds maximum allowed limit of 5,000 rows."],
+            "sample_leads": []
+        }
+
     total_rows = len(df)
     successful = 0
     duplicates = 0
@@ -420,7 +517,7 @@ def process_leads_csv(
 
     for idx, row in df.iterrows():
         try:
-            raw_email = str(row.get("email", "")).strip().lower()
+            raw_email = str(row.get("email", "")).strip().lower()[:255]
             if not raw_email or not EMAIL_REGEX.match(raw_email):
                 errors.append(f"Row {idx+1}: Invalid email address '{raw_email}'.")
                 continue
@@ -429,14 +526,14 @@ def process_leads_csv(
                 duplicates += 1
                 continue
 
-            name = str(row.get("name", "")).strip() or "Valued Contact"
-            company = str(row.get("company", "")).strip() or "Enterprise Organization"
-            industry = str(row.get("industry", "")).strip() if pd.notna(row.get("industry")) else "Technology"
-            website = str(row.get("website", "")).strip() if pd.notna(row.get("website")) else ""
-            job_title = str(row.get("job_title", "")).strip() if pd.notna(row.get("job_title")) else "Director"
-            location = str(row.get("location", "")).strip() if pd.notna(row.get("location")) else "Global"
-            company_size = str(row.get("company_size", "")).strip() if pd.notna(row.get("company_size")) else "11-50"
-            lead_source = str(row.get("lead_source", "")).strip() if pd.notna(row.get("lead_source")) else "CSV Import"
+            name = (str(row.get("name", "")).strip() or "Valued Contact")[:255]
+            company = (str(row.get("company", "")).strip() or "Enterprise Organization")[:255]
+            industry = (str(row.get("industry", "")).strip() if pd.notna(row.get("industry")) else "Technology")[:255]
+            website = (str(row.get("website", "")).strip() if pd.notna(row.get("website")) else "")[:255]
+            job_title = (str(row.get("job_title", "")).strip() if pd.notna(row.get("job_title")) else "Director")[:255]
+            location = (str(row.get("location", "")).strip() if pd.notna(row.get("location")) else "Global")[:255]
+            company_size = (str(row.get("company_size", "")).strip() if pd.notna(row.get("company_size")) else "11-50")[:255]
+            lead_source = (str(row.get("lead_source", "")).strip() if pd.notna(row.get("lead_source")) else "CSV Import")[:255]
 
             lead_data = {
                 "name": name,

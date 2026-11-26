@@ -3,13 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import require_authenticated_user
 from app.models.models import GrowthStrategy, BusinessProfile
 from app.schemas.schemas import (
     GrowthStrategyResponse, GenerateStrategyRequest, StrategySectionRegenerateRequest
 )
 from app.services.ai_strategy_service import generate_growth_strategy, generate_fallback_strategy
 
-router = APIRouter(tags=["AI Strategy"])
+router = APIRouter(tags=["AI Strategy"], dependencies=[Depends(require_authenticated_user)])
 
 class StrategyGenerationOutput(BaseModel):
     strategy: GrowthStrategyResponse

@@ -3,11 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models.models import Campaign
+from app.auth import require_authenticated_user, require_admin_user
+from app.models.models import Campaign, CampaignMetric
 from app.schemas.schemas import CampaignResponse, GenerateCampaignRequest, CampaignUpdate
 from app.services.campaign_service import generate_campaign
 
-router = APIRouter(tags=["Campaign Studio"])
+router = APIRouter(tags=["Campaign Studio"], dependencies=[Depends(require_authenticated_user)])
 
 class CampaignGenerationOutput(BaseModel):
     campaign: CampaignResponse
@@ -51,11 +52,13 @@ def update_campaign(campaign_id: int, payload: CampaignUpdate, db: Session = Dep
     db.refresh(c)
     return c
 
-@router.delete("/campaigns/{campaign_id}")
+@router.delete("/campaigns/{campaign_id}", dependencies=[Depends(require_admin_user)])
 def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    # Convert associated campaign metrics to channel-level metrics before deletion
+    db.query(CampaignMetric).filter(CampaignMetric.campaign_id == campaign_id).update({"campaign_id": None})
     db.delete(c)
     db.commit()
     return {"message": "Campaign deleted successfully"}
