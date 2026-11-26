@@ -164,12 +164,16 @@ def get_auth_status(request: Request, db: Session = Depends(get_db)):
     has_valid_session = bool(session_info)
     session_id = session_info.get("session_id") if session_info else None
 
-    authenticated = bool(has_valid_session or (not admin_key and is_local))
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+
+    authenticated = bool(
+        has_valid_session or (not admin_key and is_local and not is_prod)
+    )
     csrf_token = create_csrf_token(session_id=session_id)
 
     return AuthStatusResponse(
         authenticated=authenticated,
-        auth_required=bool(admin_key),
+        auth_required=bool(admin_key or is_prod),
         is_local=is_local,
         client_ip=client_ip,
         csrf_token=csrf_token

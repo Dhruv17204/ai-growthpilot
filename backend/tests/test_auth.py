@@ -359,6 +359,66 @@ def test_login_fails_in_production_when_admin_credentials_unconfigured(client, m
     assert "must be configured in production" in res.json()["detail"]
 
 
+def test_production_auth_status_consistency_and_access_controls(client, monkeypatch):
+    """
+    Regression test suite verifying production auth status consistency:
+    1. Production, no admin credentials, local request -> GET /api/auth/status returns 200, authenticated=False.
+    2. Production, no admin credentials, protected endpoint -> GET /api/leads returns 401.
+    3. Production, no admin credentials, login attempt -> POST /api/auth/login returns 403.
+    4. Development, no admin credentials, local request -> GET /api/auth/status returns 200, authenticated=True.
+    5. Production, valid session -> GET /api/auth/status returns 200, authenticated=True.
+    """
+    from tests.conftest import TestingSessionLocal
+    from app.auth import create_server_session
+
+    # 1. Production, no admin credentials, local request -> authenticated is False
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    client.cookies.clear()
+
+    res_status_prod = client.get("/api/auth/status")
+    assert res_status_prod.status_code == 200
+    data_prod = res_status_prod.json()
+    assert data_prod["authenticated"] is False
+    assert data_prod["is_local"] is True
+    assert data_prod["auth_required"] is True
+
+    # 2. Production, no admin credentials, protected endpoint -> 401 Unauthorized
+    res_leads_prod = client.get("/api/leads")
+    assert res_leads_prod.status_code == 401
+    assert "Unauthenticated loopback access is disabled in production" in res_leads_prod.json()["detail"]
+
+    # 3. Production, no admin credentials, login attempt -> 403 Forbidden
+    res_login_prod = client.post("/api/auth/login", json={"password": "any-password"})
+    assert res_login_prod.status_code == 403
+    assert "must be configured in production" in res_login_prod.json()["detail"]
+
+    # 4. Development, no admin credentials, local request -> authenticated is True
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    res_status_dev = client.get("/api/auth/status")
+    assert res_status_dev.status_code == 200
+    data_dev = res_status_dev.json()
+    assert data_dev["authenticated"] is True
+    assert data_dev["is_local"] is True
+    assert data_dev["auth_required"] is False
+
+    # 5. Production, valid server-side session -> authenticated is True
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    db = TestingSessionLocal()
+    try:
+        session_token, session_id = create_server_session(db, role="admin")
+    finally:
+        db.close()
+
+    res_status_sess = client.get(
+        "/api/auth/status",
+        cookies={SESSION_COOKIE_NAME: session_token}
+    )
+    assert res_status_sess.status_code == 200
+    assert res_status_sess.json()["authenticated"] is True
+
+
 def test_login_rate_limiting_and_brute_force_lockout(client, monkeypatch):
     from app.services.rate_limiter import login_rate_limiter
     login_rate_limiter.reset()
