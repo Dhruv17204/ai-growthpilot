@@ -5,8 +5,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4.svg?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-75%20Passed-success.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427)
-[![Coverage](https://img.shields.io/badge/Coverage-84.03%25%20(Backend)-brightgreen.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427)
+[![CI](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/Tests-76%20Passed-success.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/Coverage-84.03%25%20(Backend)-brightgreen.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml)
 [![Security](https://img.shields.io/badge/Security-CWE--1236%20Hardened-blue.svg)](https://cwe.mitre.org/data/definitions/1236.html)
 
 **AI GrowthPilot** is a full-stack, enterprise-grade business growth and marketing automation SaaS platform engineered specifically for small IT companies, software agencies, AI consultancies, and digital service providers.
@@ -183,7 +184,7 @@ pip install -r requirements.txt
 # Or for local development, linting, and testing:
 pip install -r requirements-dev.txt
 
-# Run backend test suite (72 passed)
+# Run backend test suite (73 passed)
 pytest -v
 
 # Launch backend server (runs on http://127.0.0.1:8000)
@@ -241,11 +242,11 @@ AI GrowthPilot explicitly separates three operational generation states:
 
 ---
 
-## 7. Automated Test Suite (75 Tests Passing — 84.03% Backend Statement Coverage)
+## 7. Automated Test Suite (76 Tests Passing — 84.03% Backend Statement Coverage)
 
-Verified via [GitHub Actions CI Run #45760370427](https://github.com/Dhruv17204/ai-growthpilot/actions/runs/45760370427), the automated test harness executes **75 total tests** across the platform (72 backend Pytest tests and 3 frontend Vitest unit tests) with **zero failures** and **84.03% statement coverage on the backend**.
+Verified via continuous integration across backend and frontend suites, the automated test harness executes **76 total tests** across the platform (73 backend Pytest tests and 3 frontend Vitest unit tests) with **zero failures** and **84.03% statement coverage on the backend**. Current CI workflow status: [![CI](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhruv17204/ai-growthpilot/actions/workflows/ci.yml).
 
-### Backend Test Suite (Pytest — 72/72 Passed, 84.03% Statement Coverage)
+### Backend Test Suite (Pytest — 73/73 Passed, 84.03% Statement Coverage)
 
 Run the automated backend test suite with coverage:
 ```powershell
@@ -253,9 +254,9 @@ cd backend
 .\venv\Scripts\pytest -v --cov=app --cov-report=term-missing
 ```
 
-**Backend Results Breakdown (72 Passed across 6 Test Modules):**
-- **Authentication, CSRF & Concurrency (`tests/test_auth.py` — 28 Tests):**
-  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, session-bound double-submit CSRF defense, logout CSRF validation, expired/tampered token rejection, RFC 9110 HTTP method policy (TRACE 405, safe GET/HEAD/OPTIONS bypass), remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), replayed revoked session rejection (401), strict rejection of hardcoded development bypass tokens (`local-dev-bypass`), production loopback unauthenticated access lockdown, unconfigured production login prevention, sliding-window login rate limiting with rolling 60-second window, and deterministic barrier/burst concurrency tests proving atomic in-flight reservation.
+**Backend Results Breakdown (73 Passed across 6 Test Modules):**
+- **Authentication, CSRF & Concurrency (`tests/test_auth.py` — 29 Tests):**
+  - HMAC-SHA256 session tokens, server-side `UserSession` tracking and database revocation, cookie issuance, login, session-bound double-submit CSRF defense, logout CSRF validation, expired/tampered token rejection, RFC 9110 HTTP method policy (TRACE 405, safe GET/HEAD/OPTIONS bypass), remote IP failure closing, spoofed header defense, RBAC admin privileges, production session secret length enforcement ($\ge 32$ chars, non-default), replayed revoked session rejection (401), strict rejection of hardcoded development bypass tokens (`local-dev-bypass`), production loopback unauthenticated access lockdown, production authentication status consistency (`/api/auth/status` vs `/api/*`), unconfigured production login prevention, sliding-window login rate limiting with rolling 60-second window, and deterministic barrier/burst concurrency tests proving atomic in-flight reservation.
 - **Analytics & Data Ingestion (`tests/test_analytics.py` — 6 Tests):**
   - Empty baseline resilience, global spend/revenue aggregation, channel-only metric aggregation, campaign deletion metric preservation, strict CSV column/date/value/duplicate validation.
 - **Lead Qualification Rubric (`tests/test_scoring.py` — 6 Tests):**
@@ -289,6 +290,8 @@ All technical assessment deliverables and reports are located in the [`docs/`](d
 
 | Document | Description |
 | :--- | :--- |
+| [`docs/DEVELOPMENT_PROMPT_JOURNAL.md`](docs/DEVELOPMENT_PROMPT_JOURNAL.md) | Comprehensive development prompt journal: actual prompts, revisions, AI tools, and validation history across all phases. |
+| [`docs/FINAL_SUBMISSION_CHECKLIST.md`](docs/FINAL_SUBMISSION_CHECKLIST.md) | Gokul Infocare assessment submission verification matrix across all requirements and deliverables. |
 | [`docs/PROMPT_ENGINEERING.md`](docs/PROMPT_ENGINEERING.md) | In-depth analysis of prompt iterations (v1.0 &rarr; v2.0 &rarr; v3.0), guardrails, and JSON schemas. |
 | [`docs/PROMPT_LOG.md`](docs/PROMPT_LOG.md) | Structured execution audit log with token counts, latency, and status. |
 | [`docs/VIDEO_PRESENTATION_SCRIPT.md`](docs/VIDEO_PRESENTATION_SCRIPT.md) | 3:45 technical presentation walkthrough mapping all 10 required points. |
@@ -316,3 +319,6 @@ All technical assessment deliverables and reports are located in the [`docs/`](d
 2. **Social Publishing:** The status `Published` is a workflow tag. AI GrowthPilot enforces human approval and does not perform unverified live social media posting.
 3. **Email Sending:** Lead outreach actions are prescriptive recommendations; live automated cold email blasting is not performed without human review.
 4. **Third-Party Scraping:** The platform bases lead evaluations strictly on uploaded data fields and company profiles without executing intrusive web scrapers.
+5. **In-Memory Rate Limiting:** The sliding-window rate limiter runs per-process with asyncio locks and timestamps. For single-container production, this is efficient and leak-safe; multi-worker horizontal scale would use a shared Redis cache.
+6. **Authentication User Interface:** Authentication and CSRF defense are fully implemented at the API and middleware layers (cookies, CSRF, HMAC sessions); a dedicated visual login dialog in the frontend UI is planned for future UX refinement.
+7. **Session Table Maintenance:** Revoked and expired session records are cleaned periodically via the background retention worker.
