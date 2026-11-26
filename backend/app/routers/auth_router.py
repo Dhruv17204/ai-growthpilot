@@ -43,78 +43,78 @@ class AuthStatusResponse(BaseModel):
 def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     client_ip = get_client_ip(request)
 
-    # 1. Enforce brute-force rate limiting
-    is_allowed, retry_after = login_rate_limiter.check_allowed(client_ip)
-    if not is_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many failed login attempts. Please try again in {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)}
+    # 1. Enforce brute-force rate limiting with concurrency-safe in-flight tracking
+    with login_rate_limiter.attempt(client_ip) as (is_allowed, retry_after, slot):
+        if not is_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed login attempts. Please try again in {retry_after} seconds.",
+                headers={"Retry-After": str(retry_after)}
+            )
+
+        expected_password = (
+            settings.ADMIN_PASSWORD.strip() if settings.ADMIN_PASSWORD
+            else (settings.ADMIN_API_KEY.strip() if settings.ADMIN_API_KEY else "")
         )
 
-    expected_password = (
-        settings.ADMIN_PASSWORD.strip() if settings.ADMIN_PASSWORD
-        else (settings.ADMIN_API_KEY.strip() if settings.ADMIN_API_KEY else "")
-    )
+        if expected_password:
+            if not secrets.compare_digest(payload.password.strip(), expected_password):
+                slot.mark_failure()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials. Incorrect password."
+                )
+        else:
+            if settings.ENVIRONMENT.lower() == "production":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Login unavailable: ADMIN_PASSWORD or ADMIN_API_KEY must be configured in production."
+                )
+            # In local unconfigured mode, any password or empty password creates a local session
+            if client_ip not in LOCAL_HOSTS:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Remote login unavailable when ADMIN_API_KEY is not configured."
+                )
 
-    if expected_password:
-        if not secrets.compare_digest(payload.password.strip(), expected_password):
-            login_rate_limiter.record_failure(client_ip)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials. Incorrect password."
-            )
-    else:
-        if settings.ENVIRONMENT.lower() == "production":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Login unavailable: ADMIN_PASSWORD or ADMIN_API_KEY must be configured in production."
-            )
-        # In local unconfigured mode, any password or empty password creates a local session
-        if client_ip not in LOCAL_HOSTS:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Remote login unavailable when ADMIN_API_KEY is not configured."
-            )
+        # Successful authentication resets failed attempts
+        slot.mark_success()
 
-    # Successful authentication resets failed attempts
-    login_rate_limiter.record_success(client_ip)
+        session_token, session_id = create_server_session(
+            db=db,
+            role="admin",
+            client_ip=client_ip,
+            user_agent=request.headers.get("User-Agent")
+        )
+        csrf_token = create_csrf_token(session_id=session_id)
 
-    session_token, session_id = create_server_session(
-        db=db,
-        role="admin",
-        client_ip=client_ip,
-        user_agent=request.headers.get("User-Agent")
-    )
-    csrf_token = create_csrf_token(session_id=session_id)
+        is_prod = settings.ENVIRONMENT.lower() == "production"
 
-    is_prod = settings.ENVIRONMENT.lower() == "production"
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_token,
+            max_age=settings.SESSION_MAX_AGE_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=is_prod,
+            path="/"
+        )
 
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session_token,
-        max_age=settings.SESSION_MAX_AGE_SECONDS,
-        httponly=True,
-        samesite="lax",
-        secure=is_prod,
-        path="/"
-    )
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=csrf_token,
+            max_age=settings.SESSION_MAX_AGE_SECONDS,
+            httponly=False,  # Accessible to frontend JavaScript for header injection
+            samesite="lax",
+            secure=is_prod,
+            path="/"
+        )
 
-    response.set_cookie(
-        key=CSRF_COOKIE_NAME,
-        value=csrf_token,
-        max_age=settings.SESSION_MAX_AGE_SECONDS,
-        httponly=False,  # Accessible to frontend JavaScript for header injection
-        samesite="lax",
-        secure=is_prod,
-        path="/"
-    )
-
-    return LoginResponse(
-        message="Session authenticated successfully.",
-        authenticated=True,
-        csrf_token=csrf_token
-    )
+        return LoginResponse(
+            message="Session authenticated successfully.",
+            authenticated=True,
+            csrf_token=csrf_token
+        )
 
 @router.post("/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):

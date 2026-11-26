@@ -177,8 +177,11 @@ python -m venv venv
 # Linux/macOS:
 # source venv/bin/activate
 
-# Install dependencies
+# Install dependencies (production runtime)
 pip install -r requirements.txt
+
+# Or for local development, linting, and testing:
+pip install -r requirements-dev.txt
 
 # Run backend test suite (17 passed)
 pytest -v

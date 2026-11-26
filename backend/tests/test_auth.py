@@ -632,4 +632,235 @@ def test_rfc9110_http_methods_and_csrf_policy(client, monkeypatch):
     assert res_get.status_code == 200
 
 
+def test_login_rate_limiter_concurrency_barrier():
+    """
+    Deterministic concurrency test using threading.Barrier:
+    - 10 threads attempt to acquire login slots simultaneously for the same IP.
+    - Exactly 5 threads acquire slots (in-flight reaches 5).
+    - Exactly 5 threads are denied with (False, retry_after >= 1).
+    - As the 5 permitted threads record failure, in-flight drops to 0 and failures reaches 5.
+    - Subsequent attempts are denied with HTTP 429 Retry-After.
+    """
+    import threading
+    from app.services.rate_limiter import LoginRateLimiter
+
+    limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0)
+    ip = "203.0.113.10"
+    num_threads = 10
+    barrier = threading.Barrier(num_threads)
+    results = []
+    lock = threading.Lock()
+
+    def worker():
+        barrier.wait()  # Synchronize thread start
+        allowed, retry_after = limiter.acquire(ip)
+        with lock:
+            results.append((allowed, retry_after))
+
+    threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Exactly 5 should be permitted, exactly 5 denied
+    permitted = [r for r in results if r[0] is True]
+    denied = [r for r in results if r[0] is False]
+    assert len(permitted) == 5, f"Expected 5 permitted, got {len(permitted)}"
+    assert len(denied) == 5, f"Expected 5 denied, got {len(denied)}"
+    for _, retry in denied:
+        assert retry >= 1
+
+    # Currently 5 attempts are in-flight
+    assert limiter.in_flight_count(ip) == 5
+
+    # Simulate threads finalizing as failures
+    for _ in range(5):
+        limiter.record_failure(ip)
+
+    # In-flight count returns to 0, failures count is 5
+    assert limiter.in_flight_count(ip) == 0
+    assert limiter.failure_count(ip) == 5
+
+    # Any new attempt is denied
+    allowed, retry = limiter.check_allowed(ip)
+    assert allowed is False
+    assert retry >= 1
+
+
+def test_login_rate_limiter_concurrent_isolated_ips():
+    """
+    Verifies that concurrent requests from distinct IPs maintain independent tracking.
+    10 threads total: 5 for IP A and 5 for IP B. All 10 must succeed in acquiring slots concurrently.
+    """
+    import threading
+    from app.services.rate_limiter import LoginRateLimiter
+
+    limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0)
+    ip_a = "198.51.100.1"
+    ip_b = "198.51.100.2"
+
+    barrier = threading.Barrier(10)
+    results_a = []
+    results_b = []
+    lock = threading.Lock()
+
+    def worker_a():
+        barrier.wait()
+        res = limiter.acquire(ip_a)
+        with lock:
+            results_a.append(res)
+
+    def worker_b():
+        barrier.wait()
+        res = limiter.acquire(ip_b)
+        with lock:
+            results_b.append(res)
+
+    threads_a = [threading.Thread(target=worker_a) for _ in range(5)]
+    threads_b = [threading.Thread(target=worker_b) for _ in range(5)]
+    all_threads = threads_a + threads_b
+
+    for t in all_threads:
+        t.start()
+    for t in all_threads:
+        t.join()
+
+    assert len(results_a) == 5
+    assert all(r[0] is True for r in results_a)
+    assert len(results_b) == 5
+    assert all(r[0] is True for r in results_b)
+
+    # 6th attempt on IP A is denied; IP B is independently at capacity
+    assert limiter.check_allowed(ip_a)[0] is False
+    assert limiter.check_allowed(ip_b)[0] is False
+
+
+def test_login_rate_limiter_concurrent_success_reset():
+    """
+    Verifies that a successful login in the presence of concurrent failed attempts
+    resets the client's failure history and releases in-flight slots cleanly.
+    """
+    from app.services.rate_limiter import LoginRateLimiter
+
+    limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0)
+    ip = "203.0.113.50"
+
+    # 4 failures recorded
+    for _ in range(4):
+        with limiter.attempt(ip) as (allowed, retry, slot):
+            assert allowed is True
+            slot.mark_failure()
+
+    assert limiter.failure_count(ip) == 4
+    assert limiter.in_flight_count(ip) == 0
+
+    # 5th attempt succeeds
+    with limiter.attempt(ip) as (allowed, retry, slot):
+        assert allowed is True
+        slot.mark_success()
+
+    # Success resets failed attempts to 0
+    assert limiter.failure_count(ip) == 0
+    assert limiter.in_flight_count(ip) == 0
+
+    # Next attempt is permitted immediately
+    allowed, retry = limiter.check_allowed(ip)
+    assert allowed is True
+    assert retry == 0
+
+
+def test_login_rate_limiter_rolling_window_boundary_retry_after():
+    """
+    Verifies Retry-After calculation and rolling window boundary condition.
+    At oldest + 60.0:
+    - Prior to boundary, retry_after is exact seconds until earliest expiry.
+    - At or after boundary, oldest failure is pruned and capacity is restored.
+    """
+    from app.services.rate_limiter import LoginRateLimiter
+
+    now = 5000.0
+
+    def mock_clock():
+        return now
+
+    limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0, clock=mock_clock)
+    ip = "203.0.113.99"
+
+    # Record 5 failures at t=5000, 5001, 5002, 5003, 5004
+    for i in range(5):
+        now = 5000.0 + i
+        with limiter.attempt(ip) as (allowed, retry, slot):
+            assert allowed is True
+            slot.mark_failure()
+
+    # At t=5004.2: oldest failure is at 5000.0, expires at 5060.0.
+    now = 5004.2
+    allowed, retry = limiter.check_allowed(ip)
+    assert allowed is False
+    # 5060.0 - 5004.2 = 55.8 -> ceil is 56
+    assert retry == math.ceil(5000.0 + 60.0 - now)
+    assert retry == 56
+
+    # At t=5059.9: still in window, ceil(5060.0 - 5059.9) = 1
+    now = 5059.9
+    allowed, retry = limiter.check_allowed(ip)
+    assert allowed is False
+    assert retry == 1
+
+    # At t=5060.0: boundary reached! Oldest failure (5000.0) expires.
+    # 4 failures remain: [5001, 5002, 5003, 5004]
+    now = 5060.0
+    allowed, retry = limiter.check_allowed(ip)
+    assert allowed is True
+    assert retry == 0
+
+
+def test_concurrent_login_endpoint_burst(monkeypatch):
+    """
+    End-to-end FastAPI endpoint concurrency test:
+    Executes 10 concurrent POST /api/auth/login requests from the same IP with wrong password.
+    Proves that exactly 5 requests return 401 Unauthorized (admitted and failed),
+    and remaining requests receive 429 Too Many Requests with valid Retry-After headers.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from app.main import app
+    from app.services.rate_limiter import login_rate_limiter
+
+    login_rate_limiter.reset()
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "ConcurrentSecret2026!")
+
+    barrier = threading.Barrier(10)
+    results = []
+    lock = threading.Lock()
+
+    def send_login_request(attempt_idx: int):
+        thread_client = TestClient(app)
+        barrier.wait()
+        res = thread_client.post(
+            "/api/auth/login",
+            json={"password": f"WrongPass_{attempt_idx}"}
+        )
+        with lock:
+            results.append((res.status_code, res.headers.get("Retry-After")))
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(send_login_request, i) for i in range(10)]
+        for f in futures:
+            f.result()
+
+    status_401s = [r for r in results if r[0] == 401]
+    status_429s = [r for r in results if r[0] == 429]
+
+    assert len(status_401s) == 5, f"Expected exactly 5 401s, got {len(status_401s)}"
+    assert len(status_429s) == 5, f"Expected exactly 5 429s, got {len(status_429s)}"
+    for _, retry_header in status_429s:
+        assert retry_header is not None
+        assert int(retry_header) > 0
+
+    login_rate_limiter.reset()
+
+
+
 
